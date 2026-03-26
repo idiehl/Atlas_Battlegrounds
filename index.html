@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Battlegrounds Atlas</title>
+  <meta
+    name="description"
+    content="Browse current Battlegrounds builds plus the live library for heroes, minions, quests, rewards, anomalies, spells, trinkets, and Timewarp."
+  >
+  <link rel="icon" type="image/svg+xml" href="./assets/atlas-compass-logo.svg?v=20260325t">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700;800&family=Marcellus&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css?v=20260325s">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#/builds" aria-label="Open Battlegrounds Atlas builds">
+        <span class="brand-mark" aria-hidden="true">
+          <img src="./assets/atlas-compass-logo.svg?v=20260325t" alt="">
+        </span>
+        <span class="brand-copy">
+          <strong>Battlegrounds Atlas</strong>
+        </span>
+      </a>
+
+      <nav class="primary-nav" id="primary-nav" aria-label="Primary"></nav>
+    </header>
+
+    <main class="app-main">
+      <section class="page-view" id="builds-view" aria-live="polite"></section>
+      <section class="page-view" id="library-view" aria-live="polite"></section>
+      <section class="page-view" id="heroes-view" aria-live="polite"></section>
+    </main>
+
+    <footer class="app-footer" id="app-footer"></footer>
+  </div>
+
+  <noscript>
+    <div class="noscript-banner">
+      This app needs JavaScript enabled to render the live Battlegrounds catalog.
+    </div>
+  </noscript>
+
+  <script src="./data/battlegrounds-catalog.js?v=20260323a"></script>
+  <script src="./data/season12-top-builds.js?v=20260325c"></script>
+  <script src="./data/build-guide-details.js?v=20260324c"></script>
+  <script src="./data/build-tier-plans.js?v=20260325a"></script>
+  <script src="./app.js?v=20260325u"></script>
+</body>
+</html>
