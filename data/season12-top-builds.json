@@ -1,0 +1,265 @@
+{
+  "asOf": "2026-03-21",
+  "season": "Battlegrounds Season 12",
+  "seasonTheme": "Tavern at the Edge of Time",
+  "rankingBasis": "Highest-ranked current Firestone composition for each main tribe, ordered by current live page placement.",
+  "methodology": [
+    "Verified the active season and Timewarped Tavern system from Blizzard's Season 12 patch notes.",
+    "Verified post-launch balance context from Blizzard's 34.4.2 and 34.6.2 Battlegrounds patch notes.",
+    "Used Firestone's live Battlegrounds compositions page for current comp rankings, usage counts, and expert play notes.",
+    "Used Prima Games' Season 12 tier list as a secondary launch-week community cross-check for tribe archetypes."
+  ],
+  "sources": [
+    {
+      "label": "Blizzard 34.2 Battlegrounds Patch Notes",
+      "url": "https://hearthstone.blizzard.com/en-us/news/24244423"
+    },
+    {
+      "label": "Blizzard 34.4.2 Patch Notes",
+      "url": "https://hearthstone.blizzard.com/en-us/news/24244400"
+    },
+    {
+      "label": "Blizzard 34.6.2 Patch Notes",
+      "url": "https://hearthstone.blizzard.com/en-us/news/24242744"
+    },
+    {
+      "label": "Firestone Battlegrounds Compositions",
+      "url": "https://www.firestoneapp.com/battlegrounds/comps"
+    },
+    {
+      "label": "Prima Games Season 12 Battlegrounds Tier List",
+      "url": "https://primagames.com/tips/hearthstone-battlegrounds-season-12-tier-list"
+    }
+  ],
+  "builds": [
+    {
+      "rank": 1,
+      "tribe": "Pirate",
+      "buildName": "APM Pirates",
+      "livePageOrder": 1,
+      "games": 55161,
+      "power": 3.3,
+      "averagePlacement": 3.65,
+      "rating": "S",
+      "difficulty": "Hard",
+      "coreCards": [
+        "Fleet Admiral Tethys",
+        "Cannon Corsair",
+        "Shore Marauder"
+      ],
+      "addonCards": [
+        "Brann Bronzebeard",
+        "Visionary Shipman",
+        "Industrious Deckhand"
+      ],
+      "whenToCommit": "Tethys + Brann.",
+      "howToPlay": "Play fast and cycle economy minions with Fleet Admiral Tethys to convert gold generation into board scaling."
+    },
+    {
+      "rank": 2,
+      "tribe": "Dragon",
+      "buildName": "Stuntdrake Dragons",
+      "livePageOrder": 2,
+      "games": 35973,
+      "power": 3.5,
+      "averagePlacement": 3.58,
+      "rating": "S",
+      "difficulty": "Hard",
+      "coreCards": [
+        "Twilight Broodmother",
+        "Stuntdrake",
+        "Titus Rivendare"
+      ],
+      "addonCards": [
+        "Fire-forged Evoker",
+        "Persistent Poet",
+        "Amber Guardian"
+      ],
+      "whenToCommit": "Stuntdrake + Twilight Broodmother + Titus.",
+      "howToPlay": "Find a way to pump Stuntdrake, then pair it with Twilight Broodmother, hatch buffs, and Titus to spread those stats."
+    },
+    {
+      "rank": 3,
+      "tribe": "Undead",
+      "buildName": "Attack Undead",
+      "livePageOrder": 4,
+      "games": 19593,
+      "power": 3.1,
+      "averagePlacement": 3.55,
+      "rating": "A",
+      "difficulty": "Medium",
+      "coreCards": [
+        "Forsaken Weaver",
+        "Handless Forsaken",
+        "Soulsplitter"
+      ],
+      "addonCards": [
+        "Wintergrasp Ghoul",
+        "Deathly Striker",
+        "Brann Bronzebeard"
+      ],
+      "whenToCommit": "Handless Forsaken + battlecry tempo engine + Brann.",
+      "howToPlay": "Use Brann and battlecry cycling to stack attack onto sticky reborn Undead, then cash it in through Handless Forsaken style boards."
+    },
+    {
+      "rank": 4,
+      "tribe": "Elemental",
+      "buildName": "Refresh Elementals",
+      "livePageOrder": 5,
+      "games": 57812,
+      "power": 4.8,
+      "averagePlacement": 3.67,
+      "rating": "A",
+      "difficulty": "Hard",
+      "coreCards": [
+        "Acid Rainfall",
+        "Air Revenant",
+        "Brann Bronzebeard"
+      ],
+      "addonCards": [
+        "Flaming Enforcer",
+        "Waveling",
+        "Rylak Metalhead"
+      ],
+      "whenToCommit": "Acid Rainfall + Air Revenant or another right-most shop buff line.",
+      "howToPlay": "Buff the right-most shop minion, land Acid Rainfall, and convert repeated refreshes into huge stat spikes."
+    },
+    {
+      "rank": 5,
+      "tribe": "Quilboar",
+      "buildName": "Boost Shop Quilboar",
+      "livePageOrder": 6,
+      "games": 22912,
+      "power": 4.0,
+      "averagePlacement": 4.3,
+      "rating": "A",
+      "difficulty": "Hard",
+      "coreCards": [
+        "Felboar",
+        "Paint Smudger",
+        "Prickly Piper"
+      ],
+      "addonCards": [
+        "Briarback Drummer",
+        "Moon-Bacon Jazzer",
+        "Sanguine Refiner"
+      ],
+      "whenToCommit": "Blood Gem or Tavern spell scaling online plus Felboar.",
+      "howToPlay": "Scale the shop with Blood Gems or Tavern spells, then consume that oversized tavern with Felboar."
+    },
+    {
+      "rank": 6,
+      "tribe": "Murloc",
+      "buildName": "End of Turn Murlocs",
+      "livePageOrder": 7,
+      "games": 18717,
+      "power": 5.6,
+      "averagePlacement": 3.36,
+      "rating": "A",
+      "difficulty": "Hard",
+      "coreCards": [
+        "Magicfin Mycologist",
+        "Young Murk-Eye",
+        "Drakkari Enchanter"
+      ],
+      "addonCards": [
+        "Felfire Conjurer",
+        "Bassgill"
+      ],
+      "whenToCommit": "Brann + Young Murk-Eye + Drakkari + Magicfin + a boosted Tavern spell.",
+      "howToPlay": "Duplicate a premium Tavern spell with Magicfin Mycologist and loop it with Young Murk-Eye plus Drakkari and Brann."
+    },
+    {
+      "rank": 7,
+      "tribe": "Naga",
+      "buildName": "End of Turn Nagas",
+      "livePageOrder": 8,
+      "games": 25893,
+      "power": 4.8,
+      "averagePlacement": 3.06,
+      "rating": "A",
+      "difficulty": "Easy",
+      "coreCards": [
+        "Fauna Whisperer",
+        "Drakkari Enchanter",
+        "Felfire Conjurer"
+      ],
+      "addonCards": [
+        "Famished Felbat",
+        "Firescale Hoarder",
+        "Nightmare Par-tea Guest"
+      ],
+      "whenToCommit": "Tavern spell boost + Fauna Whisperer.",
+      "howToPlay": "Boost Tavern spells, then let Fauna Whisperer and end-of-turn effects convert that spell value into a giant board."
+    },
+    {
+      "rank": 8,
+      "tribe": "Beast",
+      "buildName": "Beasts Beetles",
+      "livePageOrder": 10,
+      "games": 72637,
+      "power": 4.0,
+      "averagePlacement": 3.54,
+      "rating": "A",
+      "difficulty": "Medium",
+      "coreCards": [
+        "Rylak Metalhead",
+        "Silky Shimmermoth",
+        "Felhorn"
+      ],
+      "addonCards": [
+        "Brann Bronzebeard",
+        "Titus Rivendare",
+        "Monstrous Macaw"
+      ],
+      "whenToCommit": "Felhorn + Rylak + Silky Shimmermoth.",
+      "howToPlay": "Trigger Felhorn through Rylak and multipliers to grow Silky Shimmermoth and the Beetle package; reborn support matters."
+    },
+    {
+      "rank": 9,
+      "tribe": "Mech",
+      "buildName": "Bomber Mechs",
+      "livePageOrder": 11,
+      "games": 8976,
+      "power": 4.9,
+      "averagePlacement": 3.02,
+      "rating": "A",
+      "difficulty": "Medium",
+      "coreCards": [
+        "Photobomber",
+        "Titus Rivendare",
+        "Visionary Shipman"
+      ],
+      "addonCards": [
+        "Monstrous Macaw",
+        "Brann Bronzebeard",
+        "Stitched Salvager"
+      ],
+      "whenToCommit": "Visionary Shipman + Brann + Photobomber.",
+      "howToPlay": "Cycle Tavern spells and gold with Visionary Shipman and Brann or Tethys, then multiply Photobomber triggers with Macaw and Titus."
+    },
+    {
+      "rank": 10,
+      "tribe": "Demon",
+      "buildName": "Lord of Ruins Demons",
+      "livePageOrder": 12,
+      "games": 28909,
+      "power": 3.1,
+      "averagePlacement": 3.13,
+      "rating": "A",
+      "difficulty": "Easy",
+      "coreCards": [
+        "Lord of the Ruins",
+        "Devout Hellcaller",
+        "Felhorn"
+      ],
+      "addonCards": [
+        "Titus Rivendare",
+        "Rylak Metalhead",
+        "Silent Enforcer"
+      ],
+      "whenToCommit": "Lord of the Ruins + Silent Enforcer, or Rylak + Felhorn + Titus.",
+      "howToPlay": "Either replay Felhorn through Rylak or farm repeat triggers with Silent Enforcer, then let Lord of the Ruins convert self-damage into scaling."
+    }
+  ]
+}
