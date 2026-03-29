@@ -1,7 +1,29 @@
 const catalog = window.BATTLEGROUNDS_CATALOG;
 const buildsCatalog = window.BATTLEGROUNDS_BUILDS;
+const combosCatalog = window.BATTLEGROUNDS_COMBOS ?? { combos: [], methodology: [], sources: [], asOf: catalog?.syncedAt ?? "" };
 const buildGuideCatalog = window.BATTLEGROUNDS_BUILD_GUIDES ?? {};
 const buildTierPlanCatalog = window.BATTLEGROUNDS_BUILD_TIER_PLANS ?? {};
+const adConfig = window.ATLAS_AD_CONFIG ?? {
+  enabled: false,
+  desktopMinWidth: 1680,
+  hiddenRoutes: ["community", "support"],
+  adClient: "",
+  leftSlot: { adSlot: "", fallback: null },
+  rightSlot: { adSlot: "", fallback: null }
+};
+const supportConfig = window.ATLAS_SUPPORT_CONFIG ?? {
+  title: "Support Atlas",
+  eyebrow: "Support Atlas",
+  lead: "If Atlas is useful, optional contributions help fund upkeep and new development.",
+  helper: "Support is optional and not tax-deductible.",
+  transparencyNote: "No paywall and no supporter-only gameplay perks.",
+  contactEmail: "",
+  oneTimeOptions: [],
+  monthlyOptions: [],
+  customOption: null,
+  fundingUses: [],
+  notes: []
+};
 
 if (!catalog || !Array.isArray(catalog.cards) || catalog.cards.length === 0) {
   throw new Error("Battlegrounds catalog payload missing.");
@@ -23,9 +45,32 @@ const CATEGORY_PAGES = [
 ];
 
 const BUILDS_PAGE = { key: "builds", label: "Builds", kind: "builds" };
+const COMBOS_PAGE = { key: "combos", label: "Combos", kind: "combos" };
+const COMMUNITY_PAGE = { key: "community", label: "Community", kind: "community" };
+const SUPPORT_PAGE = { key: "support", label: "Support", kind: "support" };
+const COMBO_BUCKETS = [
+  {
+    key: "core",
+    label: "Core Engines",
+    note: "These are the most repeatable two-card and three-card packages already overlapping the current top build board."
+  },
+  {
+    key: "timewarp",
+    label: "Timewarp Hits",
+    note: "Chronum-only lines worth holding for because they immediately amplify real Season 12 endgame shells."
+  },
+  {
+    key: "trinket",
+    label: "Trinket Spikes",
+    note: "Less common than the core engines, but still worth taking when your board already supports the trigger pattern."
+  }
+];
 
 const NAV_PAGES = [
   BUILDS_PAGE,
+  COMBOS_PAGE,
+  COMMUNITY_PAGE,
+  SUPPORT_PAGE,
   ...CATEGORY_PAGES.map((entry) => ({
     key: entry.key,
     label: entry.label,
@@ -39,6 +84,11 @@ const PAGE_BY_CATEGORY = new Map(CATEGORY_PAGES.map((entry) => [entry.category, 
 const LEGACY_PAGE_ALIASES = new Map([
   ["overview", "builds"],
   ["build", "builds"],
+  ["combo", "combos"],
+  ["forum", "community"],
+  ["donate", "support"],
+  ["donation", "support"],
+  ["contribute", "support"],
   ["strategy", "builds"],
   ["strategies", "builds"],
   ["cards", "minions"],
@@ -141,9 +191,26 @@ const state = {
 const refs = {
   nav: document.getElementById("primary-nav"),
   buildsView: document.getElementById("builds-view"),
+  combosView: document.getElementById("combos-view"),
+  communityView: document.getElementById("community-view"),
+  supportView: document.getElementById("support-view"),
   libraryView: document.getElementById("library-view"),
   heroesView: document.getElementById("heroes-view"),
+  adRailLeft: document.getElementById("ad-rail-left"),
+  adRailRight: document.getElementById("ad-rail-right"),
   footer: document.getElementById("app-footer")
+};
+
+let communityController = null;
+let accountController = null;
+let adsenseScriptPromise = null;
+const commentState = {
+  threads: new Map(),
+  loadingKeys: new Set(),
+  errors: new Map(),
+  expandedKeys: new Set(),
+  pendingSubmitKeys: new Set(),
+  pendingDeleteIds: new Set()
 };
 
 function escapeHtml(value = "") {
@@ -282,6 +349,14 @@ function buildLookupAliasEntries(lookupCards) {
 
 function normalizeLookupText(value = "") {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function slugify(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function findCardByName(name, category = null) {
@@ -614,9 +689,57 @@ const builds = rawBuilds.map((build) => {
 });
 
 const buildsByRank = new Map(builds.map((build) => [build.rank, build]));
+const buildsByName = new Map(builds.map((build) => [build.buildName, build]));
 const buildTribeOptions = ["all", ...new Set(builds.map((build) => build.tribe))];
 const buildDifficultyOptions = ["all", ...BUILD_DIFFICULTY_ORDER.filter((difficulty) => builds.some((build) => build.difficulty === difficulty))];
 const buildRatingOptions = ["all", ...BUILD_RATING_ORDER.filter((rating) => builds.some((build) => build.rating === rating))];
+const comboBucketOrder = new Map(COMBO_BUCKETS.map((entry, index) => [entry.key, index]));
+const combos = (combosCatalog.combos ?? [])
+  .map((combo, index) => {
+    const cardsResolved = resolveNamedCards(combo.cards ?? []);
+    const sourceBuildRefs = (combo.sourceBuilds ?? [])
+      .map((buildName) => buildsByName.get(buildName))
+      .filter(Boolean);
+    const key = slugify(combo.key || combo.title || `combo-${index + 1}`) || `combo-${index + 1}`;
+
+    return {
+      ...combo,
+      key,
+      sortIndex: index,
+      cardsResolved,
+      sourceBuildRefs,
+      searchText: normalizeLookupText([
+        combo.title,
+        combo.bucket,
+        combo.reliabilityLabel,
+        combo.payoff,
+        combo.summary,
+        combo.whyItWorks,
+        combo.assemble,
+        combo.finisher,
+        ...(combo.tags ?? []),
+        ...(combo.cards ?? []),
+        ...(combo.sourceBuilds ?? [])
+      ].join(" "))
+    };
+  })
+  .sort((left, right) => {
+    if (right.reliabilityScore !== left.reliabilityScore) {
+      return right.reliabilityScore - left.reliabilityScore;
+    }
+
+    const bucketDelta = (comboBucketOrder.get(left.bucket) ?? 99) - (comboBucketOrder.get(right.bucket) ?? 99);
+    if (bucketDelta !== 0) {
+      return bucketDelta;
+    }
+
+    return left.sortIndex - right.sortIndex;
+  });
+const combosByKey = new Map(combos.map((combo) => [combo.key, combo]));
+const comboCountsByBucket = COMBO_BUCKETS.reduce((accumulator, bucket) => {
+  accumulator[bucket.key] = combos.filter((combo) => combo.bucket === bucket.key).length;
+  return accumulator;
+}, {});
 
 function getVisibleBuilds() {
   return builds
@@ -670,6 +793,419 @@ function renderPillRow(values, muted = false) {
     .filter(Boolean)
     .map((value) => `<span class="pill${muted ? " is-muted" : ""}">${escapeHtml(value)}</span>`)
     .join("");
+}
+
+function getSavedItemGroupLabel(itemType) {
+  return {
+    build: "Builds",
+    combo: "Combos",
+    hero: "Heroes",
+    minion: "Minions",
+    quest: "Quests",
+    reward: "Rewards",
+    anomaly: "Anomalies",
+    spell: "Spells",
+    trinket: "Trinkets",
+    timewarp: "Timewarp"
+  }[itemType] ?? "Saved";
+}
+
+function getAccountSnapshot() {
+  return accountController?.getState() ?? {
+    ready: false,
+    loading: false,
+    session: null,
+    savedItems: [],
+    pendingKeys: new Set(),
+    error: ""
+  };
+}
+
+function buildCommentThreadKey(targetType, targetKey) {
+  return `${String(targetType || "").trim().toLowerCase()}:${String(targetKey || "").trim().toLowerCase()}`;
+}
+
+function normalizeCommentTarget(targetType, targetKey) {
+  const normalizedType = String(targetType || "").trim().toLowerCase();
+  const normalizedKey = String(targetKey || "").trim().toLowerCase();
+
+  if (!normalizedType || !normalizedKey) {
+    return null;
+  }
+
+  return {
+    targetType: normalizedType,
+    targetKey: normalizedKey
+  };
+}
+
+function getCommentThreadState(targetType, targetKey) {
+  const normalizedTarget = normalizeCommentTarget(targetType, targetKey);
+  if (!normalizedTarget) {
+    return {
+      targetType: "",
+      targetKey: "",
+      totalComments: 0,
+      loadedLimit: 0,
+      comments: [],
+      loading: false,
+      error: ""
+    };
+  }
+
+  const threadKey = buildCommentThreadKey(normalizedTarget.targetType, normalizedTarget.targetKey);
+  const thread = commentState.threads.get(threadKey);
+  return {
+    targetType: normalizedTarget.targetType,
+    targetKey: normalizedTarget.targetKey,
+    totalComments: thread?.totalComments ?? 0,
+    loadedLimit: thread?.loadedLimit ?? 0,
+    comments: thread?.comments ?? [],
+    loading: commentState.loadingKeys.has(threadKey),
+    error: commentState.errors.get(threadKey) ?? ""
+  };
+}
+
+async function commentsApi(path, { method = "GET", body } = {}) {
+  const response = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Comment request failed.");
+  }
+
+  return payload;
+}
+
+function storeCommentThread(thread) {
+  const normalizedTarget = normalizeCommentTarget(thread?.targetType, thread?.targetKey);
+  if (!normalizedTarget) {
+    return;
+  }
+
+  const threadKey = buildCommentThreadKey(normalizedTarget.targetType, normalizedTarget.targetKey);
+  commentState.threads.set(threadKey, {
+    targetType: normalizedTarget.targetType,
+    targetKey: normalizedTarget.targetKey,
+    totalComments: Number(thread.totalComments) || 0,
+    loadedLimit: Number(thread.loadedLimit) || (Array.isArray(thread.comments) ? thread.comments.length : 0),
+    comments: Array.isArray(thread.comments) ? thread.comments : []
+  });
+  commentState.errors.delete(threadKey);
+}
+
+async function loadCommentThreads(targets, { limit = 12, force = false } = {}) {
+  const normalizedTargets = targets
+    .map((target) => normalizeCommentTarget(target.targetType, target.targetKey))
+    .filter(Boolean);
+
+  if (!normalizedTargets.length) {
+    return;
+  }
+
+  const requestTargets = normalizedTargets.filter((target) => {
+    const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+    const existing = commentState.threads.get(threadKey);
+    const needsLoad = force || !existing || (existing.loadedLimit ?? 0) < limit;
+    return needsLoad && !commentState.loadingKeys.has(threadKey);
+  });
+
+  if (!requestTargets.length) {
+    return;
+  }
+
+  requestTargets.forEach((target) => {
+    const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+    commentState.loadingKeys.add(threadKey);
+    commentState.errors.delete(threadKey);
+  });
+  render();
+
+  try {
+    const params = new URLSearchParams();
+    requestTargets.forEach((target) => {
+      params.append("target", `${target.targetType}:${target.targetKey}`);
+    });
+    params.set("limit", String(limit));
+
+    const payload = await commentsApi(`/api/comments/bootstrap?${params.toString()}`);
+    (payload.threads ?? []).forEach((thread) => storeCommentThread(thread));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load comments.";
+    requestTargets.forEach((target) => {
+      const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+      commentState.errors.set(threadKey, message);
+    });
+  } finally {
+    requestTargets.forEach((target) => {
+      const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+      commentState.loadingKeys.delete(threadKey);
+    });
+    render();
+  }
+}
+
+function getCommentAvatarMarkup(user) {
+  const initials = getCompactInitials(user?.displayName || user?.username || "AT");
+
+  if (user?.avatarUrl) {
+    return `
+      <span class="comment-avatar">
+        <img src="${escapeHtml(user.avatarUrl)}" alt="${escapeHtml(user.displayName || user.username || "Comment author")}" loading="lazy">
+      </span>
+    `;
+  }
+
+  return `
+    <span class="comment-avatar is-fallback">
+      <span>${escapeHtml(initials || "AT")}</span>
+    </span>
+  `;
+}
+
+function renderCommentEntry(comment, targetType, targetKey) {
+  const accountState = getAccountSnapshot();
+  const canDelete = Boolean(accountState.session && (accountState.session.isAdmin || accountState.session.id === comment.author.id));
+  const deletePending = commentState.pendingDeleteIds.has(comment.id);
+
+  return `
+    <article class="comment-card">
+      <div class="comment-header">
+        <div class="comment-author">
+          ${getCommentAvatarMarkup(comment.author)}
+          <div class="comment-meta">
+            <strong>${escapeHtml(comment.author.displayName || comment.author.username)}</strong>
+            <span>@${escapeHtml(comment.author.username)}</span>
+            <span>${escapeHtml(formatSyncDate(comment.createdAt))}</span>
+          </div>
+        </div>
+        ${canDelete ? `
+          <button
+            type="button"
+            class="pill-button"
+            data-comment-delete="${comment.id}"
+            data-comment-type="${escapeHtml(targetType)}"
+            data-comment-key="${escapeHtml(targetKey)}"
+            ${deletePending ? "disabled" : ""}
+          >
+            ${deletePending ? "Removing…" : "Delete"}
+          </button>
+        ` : ""}
+      </div>
+      <p class="comment-body">${escapeHtml(comment.body)}</p>
+    </article>
+  `;
+}
+
+function renderCommentComposer(targetType, targetKey, { compact = false } = {}) {
+  const accountState = getAccountSnapshot();
+  const threadKey = buildCommentThreadKey(targetType, targetKey);
+  const pending = commentState.pendingSubmitKeys.has(threadKey);
+
+  if (!accountState.session) {
+    return `
+      <div class="comment-empty">
+        <p class="comment-helper">Log in to join the conversation on this item.</p>
+        <a class="button-link" href="${buildHash("community")}">Log In To Comment</a>
+      </div>
+    `;
+  }
+
+  return `
+    <form
+      class="comment-form${compact ? " is-compact" : ""}"
+      data-comment-form="true"
+      data-comment-type="${escapeHtml(targetType)}"
+      data-comment-key="${escapeHtml(targetKey)}"
+    >
+      <label class="comment-field">
+        <span class="detail-label">Add Comment</span>
+        <textarea
+          name="body"
+          rows="${compact ? "3" : "4"}"
+          maxlength="1200"
+          placeholder="Share a note, question, matchup read, or correction."
+          ${pending ? "disabled" : ""}
+        ></textarea>
+      </label>
+      <div class="comment-form-actions">
+        <button class="button-link is-primary" type="submit" ${pending ? "disabled" : ""}>
+          ${pending ? "Posting…" : "Post Comment"}
+        </button>
+      </div>
+    </form>
+  `;
+}
+
+function renderCommentSection({
+  targetType,
+  targetKey,
+  title = "Comments",
+  helper = "",
+  compact = false,
+  collapsible = false
+}) {
+  const normalizedTarget = normalizeCommentTarget(targetType, targetKey);
+  if (!normalizedTarget) {
+    return "";
+  }
+
+  const threadKey = buildCommentThreadKey(normalizedTarget.targetType, normalizedTarget.targetKey);
+  const thread = getCommentThreadState(normalizedTarget.targetType, normalizedTarget.targetKey);
+  const expanded = !collapsible || commentState.expandedKeys.has(threadKey);
+  const hasComments = thread.comments.length > 0;
+  const countLabel = `${thread.totalComments} comment${thread.totalComments === 1 ? "" : "s"}`;
+
+  return `
+    <div class="item-comments${compact ? " is-compact" : ""}">
+      <div class="comment-thread-head">
+        <div class="comment-thread-copy">
+          <span class="detail-label">${escapeHtml(title)}</span>
+          <p class="comment-helper">
+            ${helper
+              ? escapeHtml(helper)
+              : thread.totalComments
+                ? escapeHtml(countLabel)
+                : "No comments yet."}
+          </p>
+        </div>
+        ${collapsible ? `
+          <button
+            type="button"
+            class="pill-button comment-toggle"
+            data-comment-toggle="true"
+            data-comment-type="${escapeHtml(normalizedTarget.targetType)}"
+            data-comment-key="${escapeHtml(normalizedTarget.targetKey)}"
+            aria-expanded="${expanded ? "true" : "false"}"
+          >
+            ${expanded ? "Hide Comments" : thread.totalComments ? `Comments (${thread.totalComments})` : "Comments"}
+          </button>
+        ` : ""}
+      </div>
+      ${expanded ? `
+        <div class="comment-thread-body">
+          ${thread.loading && !hasComments ? `<p class="comment-helper">Loading comments…</p>` : ""}
+          ${thread.error ? `<p class="comment-error">${escapeHtml(thread.error)}</p>` : ""}
+          ${hasComments ? `
+            <div class="comment-list">
+              ${thread.comments.map((comment) => renderCommentEntry(comment, normalizedTarget.targetType, normalizedTarget.targetKey)).join("")}
+            </div>
+          ` : (!thread.loading ? `
+            <div class="comment-empty">
+              <p class="comment-helper">No one has commented on this item yet.</p>
+            </div>
+          ` : "")}
+          ${hasComments && thread.totalComments > thread.comments.length ? `
+            <p class="comment-helper">Showing ${thread.comments.length} of ${thread.totalComments} comments.</p>
+          ` : ""}
+          ${renderCommentComposer(normalizedTarget.targetType, normalizedTarget.targetKey, { compact })}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderSaveControl({
+  itemType,
+  itemKey,
+  className = "",
+  savedText = "Saved To Library",
+  unsavedText = "Save To Library",
+  pendingText = "Saving…"
+}) {
+  if (!accountController) {
+    return "";
+  }
+
+  const accountState = getAccountSnapshot();
+  const normalizedType = String(itemType);
+  const normalizedKey = String(itemKey);
+  const classes = ["pill-button", "save-control", className].filter(Boolean).join(" ");
+
+  if (!accountState.ready && accountState.loading) {
+    return `<span class="${classes} is-disabled">${escapeHtml(pendingText)}</span>`;
+  }
+
+  if (!accountState.session) {
+    return `<a class="${classes}" href="${buildHash("community")}">Log In To Save</a>`;
+  }
+
+  const pending = accountController.isPending(normalizedType, normalizedKey);
+  const saved = accountController.isSaved(normalizedType, normalizedKey);
+  return `
+    <button
+      type="button"
+      class="${classes}${saved ? " is-active" : ""}"
+      data-save-item="true"
+      data-save-type="${escapeHtml(normalizedType)}"
+      data-save-key="${escapeHtml(normalizedKey)}"
+      ${pending ? "disabled" : ""}
+    >
+      ${escapeHtml(pending ? pendingText : saved ? savedText : unsavedText)}
+    </button>
+  `;
+}
+
+function resolveSavedItem(itemType, itemKey) {
+  const normalizedType = String(itemType || "").toLowerCase();
+  const normalizedKey = String(itemKey || "").toLowerCase();
+
+  if (normalizedType === "build") {
+    const build = buildsByRank.get(Number(normalizedKey));
+    if (!build) {
+      return null;
+    }
+
+    return {
+      itemType: normalizedType,
+      itemKey: normalizedKey,
+      groupLabel: getSavedItemGroupLabel(normalizedType),
+      title: build.buildName,
+      subtitle: `${build.rating} Tier • ${build.tribe} • Avg ${build.averagePlacement.toFixed(2)}`,
+      summary: truncateText(build.howToPlay, 128),
+      href: buildHash("builds", build.rank),
+      imageUrl: build.leadCard ? getCardImage(build.leadCard) : ""
+    };
+  }
+
+  if (normalizedType === "combo") {
+    const combo = combosByKey.get(normalizedKey);
+    if (!combo) {
+      return null;
+    }
+
+    return {
+      itemType: normalizedType,
+      itemKey: normalizedKey,
+      groupLabel: getSavedItemGroupLabel(normalizedType),
+      title: combo.title,
+      subtitle: `${combo.reliabilityLabel} • ${combo.payoff}`,
+      summary: truncateText(combo.summary, 128),
+      href: buildHash("combos"),
+      imageUrl: combo.cardsResolved.find((entry) => entry.card)?.card ? getCardImage(combo.cardsResolved.find((entry) => entry.card).card) : ""
+    };
+  }
+
+  const card = cardsById.get(Number(normalizedKey));
+  if (!card || card.category !== normalizedType) {
+    return null;
+  }
+
+  return {
+    itemType: normalizedType,
+    itemKey: normalizedKey,
+    groupLabel: getSavedItemGroupLabel(normalizedType),
+    title: card.name,
+    subtitle: getCardSummaryPills(card).slice(0, 3).join(" • "),
+    summary: truncateText(card.plainText || CATEGORY_NOTES[card.category] || "", 128),
+    href: buildHash(getPageForCategory(card.category), card.id),
+    imageUrl: getCardImage(card)
+  };
 }
 
 function truncateText(value, length = 120) {
@@ -748,6 +1284,66 @@ function getVisibleCards(category) {
     .sort(category === "hero" ? getHeroSorter(libraryState.sort) : getCardsSorter(libraryState.sort));
 }
 
+function getCategoryViewContext(category) {
+  const pageConfig = PAGE_BY_CATEGORY.get(category);
+  if (!pageConfig || category === "hero") {
+    return null;
+  }
+
+  const libraryState = getLibraryState(category);
+  const results = getVisibleCards(category);
+  const { page } = clampPage(results.length, cardsPageSize, libraryState.page);
+  const startIndex = (page - 1) * cardsPageSize;
+  const pageCards = results.slice(startIndex, startIndex + cardsPageSize);
+  const routeCard = state.route.id && cardsById.has(state.route.id)
+    ? cardsById.get(state.route.id)
+    : null;
+  const selectedCard = routeCard?.category === category
+    ? routeCard
+    : results[0] ?? null;
+  const hiddenByFilter = Boolean(selectedCard && !results.some((card) => card.id === selectedCard.id));
+
+  return {
+    pageConfig,
+    libraryState,
+    results,
+    page,
+    startIndex,
+    pageCards,
+    selectedCard,
+    hiddenByFilter,
+    isMinionPage: category === "minion",
+    emptyLabel: pageConfig.label.toLowerCase()
+  };
+}
+
+function getHeroesViewContext() {
+  const pageConfig = getCategoryPage("heroes");
+  const libraryState = getLibraryState("hero");
+  const results = getVisibleCards("hero");
+  const { page } = clampPage(results.length, heroesPageSize, libraryState.page);
+  const startIndex = (page - 1) * heroesPageSize;
+  const pageHeroes = results.slice(startIndex, startIndex + heroesPageSize);
+  const routeHero = state.route.id && cardsById.has(state.route.id)
+    ? cardsById.get(state.route.id)
+    : null;
+  const selectedHero = routeHero?.category === "hero"
+    ? routeHero
+    : results[0] ?? null;
+  const hiddenByFilter = Boolean(selectedHero && !results.some((hero) => hero.id === selectedHero.id));
+
+  return {
+    pageConfig,
+    libraryState,
+    results,
+    page,
+    startIndex,
+    pageHeroes,
+    selectedHero,
+    hiddenByFilter
+  };
+}
+
 function clampPage(totalItems, pageSize, currentPage) {
   const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
   const page = Math.min(Math.max(currentPage, 1), pageCount);
@@ -793,16 +1389,16 @@ function getCompactInitials(value, limit = 2) {
 }
 
 const BUILD_LOGO_ART_PRESETS = {
-  "APM Pirates": { cardName: "Fleet Admiral Tethys", position: "50% 18%", scale: 1.74 },
-  "Stuntdrake Dragons": { cardName: "Stuntdrake", position: "54% 15%", scale: 1.88 },
-  "Attack Undead": { cardName: "Forsaken Weaver", position: "38% 17%", scale: 2.02 },
-  "Refresh Elementals": { cardName: "Acid Rainfall", position: "50% 19%", scale: 1.74 },
-  "Boost Shop Quilboar": { cardName: "Felboar", position: "54% 18%", scale: 1.84 },
-  "End of Turn Murlocs": { cardName: "Magicfin Mycologist", position: "49% 18%", scale: 1.82 },
-  "End of Turn Nagas": { cardName: "Fauna Whisperer", position: "48% 18%", scale: 1.82 },
-  "Beasts Beetles": { cardName: "Rylak Metalhead", position: "50% 17%", scale: 1.78 },
-  "Bomber Mechs": { cardName: "Photobomber", position: "48% 17%", scale: 1.78 },
-  "Lord of Ruins Demons": { cardName: "Lord of the Ruins", position: "53% 18%", scale: 1.82 }
+  "APM Pirates": { cardName: "Fleet Admiral Tethys", position: "50% 17%", scale: 3.02 },
+  "Stuntdrake Dragons": { cardName: "Stuntdrake", position: "50% 19%", scale: 3.08 },
+  "Attack Undead": { cardName: "Forsaken Weaver", position: "49% 17%", scale: 3.12 },
+  "Refresh Elementals": { cardName: "Acid Rainfall", position: "50% 19%", scale: 3.02 },
+  "Boost Shop Quilboar": { cardName: "Felboar", position: "54% 19%", scale: 3.08 },
+  "End of Turn Murlocs": { cardName: "Magicfin Mycologist", position: "49% 18%", scale: 3.04 },
+  "End of Turn Nagas": { cardName: "Fauna Whisperer", position: "48% 18%", scale: 3.02 },
+  "Beasts Beetles": { cardName: "Rylak Metalhead", position: "50% 17%", scale: 3.02 },
+  "Bomber Mechs": { cardName: "Photobomber", position: "48% 18%", scale: 3.04 },
+  "Lord of Ruins Demons": { cardName: "Lord of the Ruins", position: "54% 18%", scale: 3.08 }
 };
 
 function getBuildLogoImage(card, fallback = "") {
@@ -821,8 +1417,8 @@ function getBuildLogoArtSpec(build) {
   const presetCard = preset?.cardName ? findCardByName(preset.cardName) : null;
   return {
     card: presetCard ?? getBuildLogoCard(build),
-    position: preset?.position ?? "50% 20%",
-    scale: preset?.scale ?? 1
+    position: preset?.position ?? "50% 18%",
+    scale: preset?.scale ?? 3.04
   };
 }
 
@@ -904,6 +1500,592 @@ function renderBuildTile(build) {
       </span>
     </a>
   `;
+}
+
+function renderComboPiece(entry) {
+  const card = entry.card;
+
+  if (!card) {
+    return `
+      <article class="combo-piece is-missing">
+        <div class="combo-piece-media">
+          <span>${escapeHtml(getCompactInitials(entry.name, 2))}</span>
+        </div>
+        <div class="combo-piece-copy">
+          <strong>${escapeHtml(entry.name)}</strong>
+          <span>Art not found in the live catalog</span>
+        </div>
+      </article>
+    `;
+  }
+
+  const targetPage = getPageForCategory(card.category);
+
+  return `
+    <a class="combo-piece" href="${buildHash(targetPage, card.id)}">
+      <div class="combo-piece-media">
+        <img src="${escapeHtml(getCardImage(card))}" alt="${escapeHtml(card.name)}" loading="lazy">
+      </div>
+      <div class="combo-piece-copy">
+        <strong>${escapeHtml(card.name)}</strong>
+        <span>${escapeHtml(`${getCategoryLabel(card.category)}${card.tier ? ` • Tier ${card.tier}` : ""}`)}</span>
+      </div>
+    </a>
+  `;
+}
+
+function renderComboBuildLinks(combo) {
+  if (!combo.sourceBuildRefs.length) {
+    return "";
+  }
+
+  return `
+    <div class="combo-build-links">
+      ${combo.sourceBuildRefs.map((build) => `
+        <a class="pill-button" href="${buildHash("builds", build.rank)}">#${build.rank} ${escapeHtml(build.buildName)}</a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderReferenceSection({
+  eyebrow,
+  title,
+  summary,
+  basisLabel = "Selection Basis",
+  basisText = "",
+  methodology = [],
+  sources = []
+}) {
+  const hasMethodology = Array.isArray(methodology) && methodology.length > 0;
+  const hasSources = Array.isArray(sources) && sources.length > 0;
+
+  if (!basisText && !hasMethodology && !hasSources) {
+    return "";
+  }
+
+  return `
+    <section class="page-card build-guide-section">
+      <div class="section-head build-guide-subhead">
+        <div>
+          <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+          <h2 class="section-title">${escapeHtml(title)}</h2>
+          <p class="filter-helper">${escapeHtml(summary)}</p>
+        </div>
+      </div>
+      <div class="build-source-layout">
+        <article class="build-source-block">
+          <span class="detail-label">${escapeHtml(basisLabel)}</span>
+          <div class="build-source-list">
+            ${basisText ? `<p>${escapeHtml(basisText)}</p>` : ""}
+            ${hasMethodology ? methodology.map((entry) => `<p>${escapeHtml(entry)}</p>`).join("") : ""}
+          </div>
+        </article>
+        <article class="build-source-block">
+          <span class="detail-label">Sources</span>
+          <div class="build-source-list">
+            ${hasSources
+              ? sources.map((source) => `<p>${escapeHtml(source.label)}</p>`).join("")
+              : "<p>No source links captured for this section yet.</p>"}
+          </div>
+          ${hasSources ? `
+            <div class="build-source-links">
+              ${sources.map((source) => `
+                <a class="pill-button" href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.label)}</a>
+              `).join("")}
+            </div>
+          ` : ""}
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+function renderComboRow(combo) {
+  const bucketClass = `combo-list-item--${combo.bucket}`;
+
+  return `
+    <article class="combo-list-item ${escapeHtml(bucketClass)}" role="row">
+      <div class="combo-row-main" role="cell">
+        <span class="detail-label combo-cell-label">Combo</span>
+        <div class="pill-row combo-row-pills">
+          ${renderPillRow([
+            combo.reliabilityLabel,
+            combo.payoff,
+            ...(combo.tags ?? []).slice(0, 2)
+          ], true)}
+        </div>
+        <div class="combo-row-heading">
+          <h3>${escapeHtml(combo.title)}</h3>
+          ${renderSaveControl({
+            itemType: "combo",
+            itemKey: combo.key,
+            className: "combo-save-button",
+            savedText: "Saved",
+            unsavedText: "Save Combo",
+            pendingText: "Saving…"
+          })}
+        </div>
+        <p class="combo-summary">${escapeHtml(combo.summary)}</p>
+        ${combo.sourceBuildRefs.length ? `
+          <div class="combo-row-builds">
+            <span class="detail-label">Seen In Guides</span>
+            ${renderComboBuildLinks(combo)}
+          </div>
+        ` : ""}
+      </div>
+
+      <div class="combo-row-cards" aria-label="Combo cards" role="cell">
+        <span class="detail-label combo-cell-label">Cards</span>
+        <div class="combo-piece-grid">
+          ${combo.cardsResolved.map((entry) => renderComboPiece(entry)).join("")}
+        </div>
+      </div>
+
+      <div class="combo-row-note" role="cell">
+        <span class="detail-label combo-cell-label">Why It Works</span>
+        <p>${escapeHtml(combo.whyItWorks)}</p>
+      </div>
+
+      <div class="combo-row-note" role="cell">
+        <span class="detail-label combo-cell-label">When To Take It</span>
+        <p>${escapeHtml(combo.assemble)}</p>
+      </div>
+
+      <div class="combo-row-note" role="cell">
+        <span class="detail-label combo-cell-label">Cap Board Payoff</span>
+        <p>${escapeHtml(combo.finisher)}</p>
+      </div>
+
+      <div class="combo-row-comments" role="cell">
+        ${renderCommentSection({
+          targetType: "combo",
+          targetKey: combo.key,
+          title: "Combo Comments",
+          helper: "",
+          compact: true,
+          collapsible: true
+        })}
+      </div>
+    </article>
+  `;
+}
+
+function renderCombosView() {
+  refs.combosView.classList.toggle("is-active", state.route.page === "combos");
+
+  if (state.route.page !== "combos") {
+    refs.combosView.innerHTML = "";
+    return;
+  }
+
+  const comboSections = COMBO_BUCKETS.map((bucket) => ({
+    ...bucket,
+    combos: combos.filter((combo) => combo.bucket === bucket.key)
+  })).filter((bucket) => bucket.combos.length > 0);
+
+  refs.combosView.innerHTML = `
+    <div class="page-stack">
+      <section class="page-hero">
+        <div class="page-hero-copy">
+          <p class="eyebrow">Combo Atlas</p>
+          <h1>${escapeHtml(combosCatalog.title || "Season 12 Power Combos")}</h1>
+          <p class="page-hero-lead">
+            Atlas isolates the small card packages that actually flip fights and economy turns in Season 12.
+            The list starts with the most reliable engines already overlapping the live top-build board, then adds the best Timewarp and trinket spikes once the shell can support them.
+          </p>
+          <p class="filter-helper">Combo board refreshed ${escapeHtml(formatSyncDate(combosCatalog.asOf || buildsCatalog.asOf || catalog.syncedAt))}.</p>
+        </div>
+        <div class="hero-logo-panel" aria-hidden="true">
+          <div class="hero-logo-frame">
+            <img src="./assets/atlas-compass-logo.svg?v=20260325t" alt="">
+          </div>
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="page-header">
+          <p class="eyebrow">How To Read This Page</p>
+          <h2>Reliable First, Conditional Second</h2>
+          <p>
+            These combos are sorted by how often the package appears cleanly in real games.
+            Core Engines are the most repeatable lines, Timewarp Hits are the best Chronum-only pivots, and Trinket Spikes are worth taking when your board already supports the trigger pattern.
+          </p>
+        </div>
+        <div class="stat-rail combo-stat-rail">
+          <article class="summary-card">
+            <span class="summary-label">Core Engines</span>
+            <strong>${formatCount(comboCountsByBucket.core ?? 0)}</strong>
+            <p>Reliable minion-led loops that already overlap active top builds.</p>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Timewarp Hits</span>
+            <strong>${formatCount(comboCountsByBucket.timewarp ?? 0)}</strong>
+            <p>Chronum packages with real late-game ceiling once offered.</p>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Trinket Spikes</span>
+            <strong>${formatCount(comboCountsByBucket.trinket ?? 0)}</strong>
+            <p>Conditional trinket lines that are worth locking once the shell is live.</p>
+          </article>
+        </div>
+      </section>
+
+      ${comboSections.map((section) => `
+        <section class="page-card combo-section">
+          <div class="section-head combo-section-head">
+            <div>
+              <p class="eyebrow">${escapeHtml(section.label)}</p>
+              <h2 class="section-title">${escapeHtml(section.label)}</h2>
+              <p class="filter-helper">${escapeHtml(section.note)}</p>
+            </div>
+          </div>
+          <div class="combo-table-scroll">
+            <div class="combo-table" role="table" aria-label="${escapeHtml(section.label)} combo catalog">
+              <div class="combo-table-head" role="rowgroup">
+                <div class="combo-table-row combo-table-row-head" role="row">
+                  <span class="combo-table-col" role="columnheader">Combo</span>
+                  <span class="combo-table-col" role="columnheader">Cards</span>
+                  <span class="combo-table-col" role="columnheader">Why It Works</span>
+                  <span class="combo-table-col" role="columnheader">When To Take It</span>
+                  <span class="combo-table-col" role="columnheader">Cap Board Payoff</span>
+                </div>
+              </div>
+              <div class="combo-table-body" role="rowgroup">
+                ${section.combos.map((combo) => renderComboRow(combo)).join("")}
+              </div>
+            </div>
+          </div>
+        </section>
+      `).join("")}
+
+      ${renderReferenceSection({
+        eyebrow: "Atlas Notes",
+        title: "How Combo Picks Are Chosen",
+        summary: "Atlas favors small packages that overlap live endgame boards, create a real power turn immediately, and still scale once the lobby stops giving free setup.",
+        basisLabel: "Selection Basis",
+        basisText: "The combo board starts with repeatable engines that already overlap the strongest current build shells, then adds the best Timewarp and trinket pivots once their support pieces are already credible.",
+        methodology: combosCatalog.methodology,
+        sources: combosCatalog.sources
+      })}
+    </div>
+  `;
+}
+
+function renderCommunityView() {
+  refs.communityView.classList.toggle("is-active", state.route.page === "community");
+  if (!communityController) {
+    refs.communityView.innerHTML = state.route.page === "community"
+      ? `
+        <div class="empty-state">
+          <h3>Community Unavailable</h3>
+          <p>The Community controller did not load. Reload the page and try again.</p>
+        </div>
+      `
+      : "";
+    return;
+  }
+
+  communityController.render({
+    isActive: state.route.page === "community",
+    routeId: state.route.page === "community" ? state.route.id : null,
+    mount: refs.communityView
+  });
+}
+
+function getSupportOptionState(option) {
+  const url = String(option?.url || "").trim();
+  return {
+    ...option,
+    url,
+    isActive: /^https?:\/\//i.test(url)
+  };
+}
+
+function renderSupportAction(option, buttonText) {
+  const resolved = getSupportOptionState(option);
+  if (!resolved.isActive) {
+    return `
+      <div class="support-action-shell">
+        <span class="button-link is-disabled">Stripe Link Pending</span>
+        <p class="support-link-note">Add a Stripe Payment Link in <code>support-config.js</code> to activate this option.</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="support-action-shell">
+      <a class="button-link is-primary" href="${escapeHtml(resolved.url)}" target="_blank" rel="noreferrer">${escapeHtml(buttonText)}</a>
+      <p class="support-link-note">Secure checkout opens in Stripe.</p>
+    </div>
+  `;
+}
+
+function renderSupportOptionCard(option, { recurring = false } = {}) {
+  const resolved = getSupportOptionState(option);
+  const buttonText = recurring ? `Support ${resolved.amount}` : `Contribute ${resolved.amount}`;
+
+  return `
+    <article class="support-option-card">
+      <div class="support-option-copy">
+        <span class="detail-label">${escapeHtml(resolved.label)}</span>
+        <h3>${escapeHtml(resolved.amount)}</h3>
+        <p>${escapeHtml(resolved.note || "")}</p>
+      </div>
+      ${renderSupportAction(resolved, buttonText)}
+    </article>
+  `;
+}
+
+function renderSupportView() {
+  refs.supportView.classList.toggle("is-active", state.route.page === "support");
+
+  if (state.route.page !== "support") {
+    refs.supportView.innerHTML = "";
+    return;
+  }
+
+  const oneTimeOptions = (supportConfig.oneTimeOptions ?? []).map((option) => getSupportOptionState(option));
+  const monthlyOptions = (supportConfig.monthlyOptions ?? []).map((option) => getSupportOptionState(option));
+  const customOption = supportConfig.customOption ? getSupportOptionState(supportConfig.customOption) : null;
+  const allOptions = [...oneTimeOptions, ...monthlyOptions, ...(customOption ? [customOption] : [])];
+  const hasLiveCheckout = allOptions.some((option) => option.isActive);
+  const contactEmail = String(supportConfig.contactEmail || "").trim();
+
+  refs.supportView.innerHTML = `
+    <div class="page-stack">
+      <section class="page-hero support-hero">
+        <div class="page-hero-copy">
+          <p class="eyebrow">${escapeHtml(supportConfig.eyebrow || "Support Atlas")}</p>
+          <h1>${escapeHtml(supportConfig.title || "Support Atlas")}</h1>
+          <p class="page-hero-lead">${escapeHtml(supportConfig.lead || "Optional support helps fund the next round of Atlas development.")}</p>
+          <p class="filter-helper">${escapeHtml(supportConfig.helper || "")}</p>
+          <div class="hero-actions">
+            <a class="button-link" href="${buildHash("community")}">See Community Work</a>
+            <a class="button-link" href="${buildHash("builds")}">Back To Builds</a>
+          </div>
+        </div>
+        <div class="stat-rail">
+          <article class="summary-card">
+            <span class="summary-label">No Paywall</span>
+            <strong>Open Access</strong>
+            <p>Atlas stays public whether someone contributes or not.</p>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Primary Focus</span>
+            <strong>Development</strong>
+            <p>Support goes toward upkeep, design, features, and faster iteration.</p>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Checkout</span>
+            <strong>${escapeHtml(hasLiveCheckout ? "Ready" : "Config Pending")}</strong>
+            <p>${escapeHtml(hasLiveCheckout ? "At least one live support option is configured." : "Paste Stripe links into support-config.js to turn these buttons on.")}</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Contribution Options</p>
+            <h2 class="section-title">One-Time Support</h2>
+            <p class="filter-helper">Best for people who want to chip in once without signing up for an ongoing plan.</p>
+          </div>
+        </div>
+        <div class="support-option-grid">
+          ${oneTimeOptions.map((option) => renderSupportOptionCard(option)).join("")}
+          ${customOption ? renderSupportOptionCard(customOption) : ""}
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Recurring Support</p>
+            <h2 class="section-title">Monthly Backing</h2>
+            <p class="filter-helper">Best for people who want to help fund ongoing hosting, maintenance, and feature work.</p>
+          </div>
+        </div>
+        <div class="support-option-grid">
+          ${monthlyOptions.map((option) => renderSupportOptionCard(option, { recurring: true })).join("")}
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Where It Goes</p>
+            <h2 class="section-title">What Support Funds</h2>
+            <p class="filter-helper">${escapeHtml(supportConfig.transparencyNote || "Support helps keep Atlas moving.")}</p>
+          </div>
+        </div>
+        <div class="support-use-grid">
+          ${(supportConfig.fundingUses ?? []).map((entry) => `
+            <article class="support-info-card">
+              <h3>${escapeHtml(entry.title)}</h3>
+              <p>${escapeHtml(entry.body)}</p>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Notes</p>
+            <h2 class="section-title">Support Expectations</h2>
+            <p class="filter-helper">Keep the language clean and transparent so people know what they are actually contributing toward.</p>
+          </div>
+        </div>
+        <div class="support-note-grid">
+          ${(supportConfig.notes ?? []).map((entry) => `
+            <article class="support-info-card">
+              <h3>${escapeHtml(entry.title)}</h3>
+              <p>${escapeHtml(entry.body)}</p>
+            </article>
+          `).join("")}
+        </div>
+        <div class="support-disclaimer">
+          <p>${escapeHtml(supportConfig.helper || "Support is optional.")}</p>
+          ${contactEmail ? `<p>Questions about support: <a href="mailto:${escapeHtml(contactEmail)}">${escapeHtml(contactEmail)}</a></p>` : ""}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function shouldShowAdRails() {
+  const minWidth = Number(adConfig.desktopMinWidth) || 1680;
+  const hiddenRoutes = new Set((adConfig.hiddenRoutes ?? []).map((value) => String(value || "").trim().toLowerCase()));
+  return Boolean(
+    refs.adRailLeft &&
+    refs.adRailRight &&
+    adConfig.enabled &&
+    window.innerWidth >= minWidth &&
+    !hiddenRoutes.has(state.route.page)
+  );
+}
+
+function getAdSlotState(slotConfig) {
+  const adClient = String(adConfig.adClient || "").trim();
+  const adSlot = String(slotConfig?.adSlot || "").trim();
+  const fallback = slotConfig?.fallback ?? null;
+
+  return {
+    adClient,
+    adSlot,
+    fallback,
+    isAdsenseReady: Boolean(adClient && adSlot)
+  };
+}
+
+function renderAdFallbackCard(fallback) {
+  if (!fallback) {
+    return "";
+  }
+
+  const href = String(fallback.href || "").trim();
+  const openTag = href ? "a" : "article";
+  const closeTag = href ? "a" : "article";
+  const hrefMarkup = href ? ` href="${escapeHtml(href)}"` : "";
+
+  return `
+    <${openTag} class="ad-slot-card is-house"${hrefMarkup}>
+      <span class="detail-label">${escapeHtml(fallback.label || "Atlas")}</span>
+      <h3>${escapeHtml(fallback.title || "Atlas House Ad")}</h3>
+      <p>${escapeHtml(fallback.body || "Use this rail for sponsors or internal promotion.")}</p>
+      ${fallback.cta ? `<span class="button-link">${escapeHtml(fallback.cta)}</span>` : ""}
+    </${closeTag}>
+  `;
+}
+
+function renderAdRailSlot(slotConfig, position) {
+  const slotState = getAdSlotState(slotConfig);
+
+  if (slotState.isAdsenseReady) {
+    return `
+      <div class="ad-slot-card is-adsense">
+        <span class="ad-slot-label">Advertisement</span>
+        <ins
+          class="adsbygoogle atlas-adsense-slot"
+          data-atlas-slot="${escapeHtml(position)}"
+          data-ad-client="${escapeHtml(slotState.adClient)}"
+          data-ad-slot="${escapeHtml(slotState.adSlot)}"
+          data-ad-format="auto"
+          data-full-width-responsive="false"
+        ></ins>
+      </div>
+    `;
+  }
+
+  return renderAdFallbackCard(slotState.fallback);
+}
+
+function ensureAdsenseScriptLoaded(clientId) {
+  if (adsenseScriptPromise) {
+    return adsenseScriptPromise;
+  }
+
+  adsenseScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[data-atlas-adsense="${escapeHtml(clientId)}"]`);
+    if (existing) {
+      resolve();
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.dataset.atlasAdsense = clientId;
+    script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(clientId)}`;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("AdSense script failed to load."));
+    document.head.appendChild(script);
+  }).catch(() => {});
+
+  return adsenseScriptPromise;
+}
+
+function hydrateAdRails() {
+  if (!shouldShowAdRails()) {
+    return;
+  }
+
+  const clientId = String(adConfig.adClient || "").trim();
+  if (!clientId) {
+    return;
+  }
+
+  void ensureAdsenseScriptLoaded(clientId).then(() => {
+    document.querySelectorAll(".atlas-adsense-slot:not([data-atlas-init])").forEach((slot) => {
+      try {
+        (window.adsbygoogle = window.adsbygoogle || []).push({});
+        slot.dataset.atlasInit = "true";
+      } catch {
+        // Ignore transient AdSense initialization errors during local config.
+      }
+    });
+  });
+}
+
+function renderAdRails() {
+  if (!refs.adRailLeft || !refs.adRailRight) {
+    return;
+  }
+
+  const showRails = shouldShowAdRails();
+  refs.adRailLeft.classList.toggle("is-visible", showRails);
+  refs.adRailRight.classList.toggle("is-visible", showRails);
+
+  if (!showRails) {
+    refs.adRailLeft.innerHTML = "";
+    refs.adRailRight.innerHTML = "";
+    return;
+  }
+
+  refs.adRailLeft.innerHTML = renderAdRailSlot(adConfig.leftSlot, "left");
+  refs.adRailRight.innerHTML = renderAdRailSlot(adConfig.rightSlot, "right");
+  hydrateAdRails();
 }
 
 function renderMissingCardPills(values, label = "Unlinked Names") {
@@ -1386,10 +2568,26 @@ function renderBuildGuidePage(build) {
           ])}</div>
           <div class="hero-actions">
             <a class="button-link is-primary" href="${buildHash("builds")}">Back To Builds</a>
+            ${renderSaveControl({
+              itemType: "build",
+              itemKey: build.rank,
+              className: "build-save-button",
+              savedText: "Saved To Library",
+              unsavedText: "Save Build",
+              pendingText: "Saving…"
+            })}
           </div>
         </div>
       </section>
       ${renderBuildGuideSection(build, { standalone: true })}
+      <section class="page-card">
+        ${renderCommentSection({
+          targetType: "build",
+          targetKey: String(build.rank),
+          title: "Build Comments",
+          helper: "Share matchup reads, transition notes, and tech adjustments for this guide."
+        })}
+      </section>
     </div>
   `;
 }
@@ -1485,6 +2683,15 @@ function renderCardDetail(card, hiddenByFilter = false) {
         <span class="detail-label">${escapeHtml(getCategoryLabel(card.category))}</span>
         <h3>${escapeHtml(card.name)}</h3>
         <div class="detail-pill-row">${renderPillRow(getCardSummaryPills(card))}</div>
+        <div class="detail-actions">
+          ${renderSaveControl({
+            itemType: card.category,
+            itemKey: card.id,
+            savedText: "Saved To Library",
+            unsavedText: `Save ${card.category === "hero" ? "Hero" : "Card"}`,
+            pendingText: "Saving…"
+          })}
+        </div>
       </div>
       ${hiddenByFilter ? `
         <div class="detail-section">
@@ -1510,6 +2717,12 @@ function renderCardDetail(card, hiddenByFilter = false) {
           </div>
         </div>
       ` : ""}
+      ${renderCommentSection({
+        targetType: card.category,
+        targetKey: String(card.id),
+        title: "Item Comments",
+        helper: "Discuss interactions, edge cases, and how this card fits the current meta."
+      })}
     </aside>
   `;
 }
@@ -1538,6 +2751,15 @@ function renderHeroDetail(hero, hiddenByFilter = false) {
         <span class="detail-label">Hero</span>
         <h3>${escapeHtml(hero.name)}</h3>
         <div class="detail-pill-row">${renderPillRow(getCardSummaryPills(hero))}</div>
+        <div class="detail-actions">
+          ${renderSaveControl({
+            itemType: "hero",
+            itemKey: hero.id,
+            savedText: "Saved To Library",
+            unsavedText: "Save Hero",
+            pendingText: "Saving…"
+          })}
+        </div>
       </div>
       ${hiddenByFilter ? `
         <div class="detail-section">
@@ -1581,6 +2803,12 @@ function renderHeroDetail(hero, hiddenByFilter = false) {
           </div>
         ` : ""}
       </div>
+      ${renderCommentSection({
+        targetType: "hero",
+        targetKey: String(hero.id),
+        title: "Hero Comments",
+        helper: "Use this thread for armor reads, hero-power lines, and lobby-specific notes."
+      })}
     </aside>
   `;
 }
@@ -1705,6 +2933,16 @@ function renderBuildsView() {
           </div>
         </section>
       `}
+
+      ${renderReferenceSection({
+        eyebrow: "Board Notes",
+        title: "Why These Builds Are On The Board",
+        summary: "The ranked list is curated, but the underlying board is still anchored to live comp performance, current strategy writeups, and a deliberately wider set of supported archetypes than the featured top tier alone.",
+        basisLabel: "Ranking Basis",
+        basisText: buildsCatalog.rankingBasis,
+        methodology: buildsCatalog.methodology,
+        sources: buildsCatalog.sources
+      })}
     </div>
   `;
 }
@@ -1734,29 +2972,33 @@ function getCategorySortOptions(category) {
 }
 
 function renderCategoryView() {
-  const pageConfig = getCategoryPage();
-  if (!pageConfig || pageConfig.category === "hero") {
+  const routePage = getCategoryPage();
+  if (!routePage || routePage.category === "hero") {
     refs.libraryView.classList.remove("is-active");
     refs.libraryView.innerHTML = "";
     return;
   }
 
-  const libraryState = getLibraryState(pageConfig.category);
-  const results = getVisibleCards(pageConfig.category);
-  const { page } = clampPage(results.length, cardsPageSize, libraryState.page);
-  libraryState.page = page;
-  const startIndex = (page - 1) * cardsPageSize;
-  const pageCards = results.slice(startIndex, startIndex + cardsPageSize);
+  const view = getCategoryViewContext(routePage.category);
+  if (!view) {
+    refs.libraryView.classList.remove("is-active");
+    refs.libraryView.innerHTML = "";
+    return;
+  }
 
-  const routeCard = state.route.id && cardsById.has(state.route.id)
-    ? cardsById.get(state.route.id)
-    : null;
-  const selectedCard = routeCard?.category === pageConfig.category
-    ? routeCard
-    : results[0] ?? null;
-  const hiddenByFilter = Boolean(selectedCard && !results.some((card) => card.id === selectedCard.id));
-  const isMinionPage = pageConfig.category === "minion";
-  const emptyLabel = pageConfig.label.toLowerCase();
+  const {
+    pageConfig,
+    libraryState,
+    results,
+    page,
+    startIndex,
+    pageCards,
+    selectedCard,
+    hiddenByFilter,
+    isMinionPage,
+    emptyLabel
+  } = view;
+  libraryState.page = page;
 
   refs.libraryView.classList.add("is-active");
   refs.libraryView.innerHTML = `
@@ -1851,21 +3093,17 @@ function renderCategoryView() {
 }
 
 function renderHeroesView() {
-  const pageConfig = getCategoryPage("heroes");
-  const libraryState = getLibraryState("hero");
-  const results = getVisibleCards("hero");
-  const { page } = clampPage(results.length, heroesPageSize, libraryState.page);
+  const {
+    pageConfig,
+    libraryState,
+    results,
+    page,
+    startIndex,
+    pageHeroes,
+    selectedHero,
+    hiddenByFilter
+  } = getHeroesViewContext();
   libraryState.page = page;
-  const startIndex = (page - 1) * heroesPageSize;
-  const pageHeroes = results.slice(startIndex, startIndex + heroesPageSize);
-
-  const routeHero = state.route.id && cardsById.has(state.route.id)
-    ? cardsById.get(state.route.id)
-    : null;
-  const selectedHero = routeHero?.category === "hero"
-    ? routeHero
-    : results[0] ?? null;
-  const hiddenByFilter = Boolean(selectedHero && !results.some((hero) => hero.id === selectedHero.id));
 
   refs.heroesView.classList.toggle("is-active", state.route.page === "heroes");
   refs.heroesView.innerHTML = `
@@ -1954,6 +3192,43 @@ function renderFooter() {
   `;
 }
 
+function getActiveCommentTargets() {
+  if (state.route.page === "combos") {
+    return combos.map((combo) => ({
+      targetType: "combo",
+      targetKey: combo.key
+    }));
+  }
+
+  if (state.route.page === "builds" && state.route.id != null) {
+    const build = buildsByRank.get(state.route.id);
+    return build ? [{ targetType: "build", targetKey: String(build.rank) }] : [];
+  }
+
+  if (state.route.page === "heroes") {
+    const view = getHeroesViewContext();
+    return view.selectedHero ? [{ targetType: "hero", targetKey: String(view.selectedHero.id) }] : [];
+  }
+
+  const categoryPage = getCategoryPage();
+  if (categoryPage && categoryPage.category !== "hero") {
+    const view = getCategoryViewContext(categoryPage.category);
+    return view?.selectedCard ? [{ targetType: view.selectedCard.category, targetKey: String(view.selectedCard.id) }] : [];
+  }
+
+  return [];
+}
+
+function ensureCommentsForActiveRoute() {
+  const targets = getActiveCommentTargets();
+  if (!targets.length) {
+    return;
+  }
+
+  const limit = state.route.page === "combos" ? 2 : 20;
+  void loadCommentThreads(targets, { limit });
+}
+
 function render() {
   const previousRoute = state.route;
   const nextRoute = parseHash();
@@ -1962,9 +3237,14 @@ function render() {
   state.route = nextRoute;
   renderNav();
   renderBuildsView();
+  renderCombosView();
+  renderCommunityView();
+  renderSupportView();
   renderCategoryView();
   renderHeroesView();
+  renderAdRails();
   renderFooter();
+  ensureCommentsForActiveRoute();
 
   if (routeChanged) {
     requestAnimationFrame(() => {
@@ -2001,6 +3281,82 @@ function resetCategoryFilters(category) {
 }
 
 function handleClick(event) {
+  const saveButton = event.target.closest("[data-save-item]");
+  if (saveButton) {
+    event.preventDefault();
+
+    if (!accountController) {
+      return;
+    }
+
+    void accountController.toggleSaved({
+      itemType: saveButton.dataset.saveType,
+      itemKey: saveButton.dataset.saveKey
+    }).catch(() => {});
+    return;
+  }
+
+  const commentToggle = event.target.closest("[data-comment-toggle]");
+  if (commentToggle) {
+    event.preventDefault();
+
+    const target = normalizeCommentTarget(commentToggle.dataset.commentType, commentToggle.dataset.commentKey);
+    if (!target) {
+      return;
+    }
+
+    const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+    const expanded = commentState.expandedKeys.has(threadKey);
+    if (expanded) {
+      commentState.expandedKeys.delete(threadKey);
+      render();
+      return;
+    }
+
+    commentState.expandedKeys.add(threadKey);
+    const thread = getCommentThreadState(target.targetType, target.targetKey);
+    render();
+    void loadCommentThreads([target], {
+      limit: Math.max(20, thread.totalComments || 20),
+      force: thread.loadedLimit < Math.max(20, thread.totalComments || 20)
+    });
+    return;
+  }
+
+  const deleteCommentButton = event.target.closest("[data-comment-delete]");
+  if (deleteCommentButton) {
+    event.preventDefault();
+    const commentId = Number(deleteCommentButton.dataset.commentDelete);
+    const target = normalizeCommentTarget(deleteCommentButton.dataset.commentType, deleteCommentButton.dataset.commentKey);
+
+    if (!commentId || !target) {
+      return;
+    }
+
+    commentState.pendingDeleteIds.add(commentId);
+    render();
+
+    void commentsApi(`/api/comments/${commentId}`, { method: "DELETE" })
+      .then((payload) => {
+        if (payload.thread) {
+          storeCommentThread(payload.thread);
+        }
+      })
+      .catch((error) => {
+        const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+        commentState.errors.set(threadKey, error instanceof Error ? error.message : "Failed to delete comment.");
+      })
+      .finally(() => {
+        commentState.pendingDeleteIds.delete(commentId);
+        render();
+      });
+    return;
+  }
+
+  if (communityController?.handleClick(event)) {
+    return;
+  }
+
   const navButton = event.target.closest("[data-nav-page]");
   if (navButton) {
     event.preventDefault();
@@ -2039,6 +3395,51 @@ function handleClick(event) {
     event.preventDefault();
     getLibraryState("hero").page = Number(heroesPage.dataset.heroesPage) || 1;
     render();
+  }
+}
+
+function handleSubmit(event) {
+  const commentForm = event.target.closest("[data-comment-form]");
+  if (commentForm) {
+    event.preventDefault();
+
+    const target = normalizeCommentTarget(commentForm.dataset.commentType, commentForm.dataset.commentKey);
+    if (!target) {
+      return;
+    }
+
+    const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+    if (commentState.pendingSubmitKeys.has(threadKey)) {
+      return;
+    }
+    const values = Object.fromEntries(new FormData(commentForm).entries());
+    commentState.pendingSubmitKeys.add(threadKey);
+    commentState.expandedKeys.add(threadKey);
+    commentState.errors.delete(threadKey);
+
+    void commentsApi("/api/comments", {
+      method: "POST",
+      body: {
+        targetType: target.targetType,
+        targetKey: target.targetKey,
+        body: values.body
+      }
+    }).then((payload) => {
+      if (payload.thread) {
+        storeCommentThread(payload.thread);
+      }
+      commentForm.reset();
+    }).catch((error) => {
+      commentState.errors.set(threadKey, error instanceof Error ? error.message : "Failed to post comment.");
+    }).finally(() => {
+      commentState.pendingSubmitKeys.delete(threadKey);
+      render();
+    });
+    return;
+  }
+
+  if (communityController?.handleSubmit(event)) {
+    return;
   }
 }
 
@@ -2129,10 +3530,46 @@ function handleChange(event) {
   }
 }
 
+let resizeFrame = 0;
+function handleResize() {
+  if (resizeFrame) {
+    cancelAnimationFrame(resizeFrame);
+  }
+
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0;
+    render();
+  });
+}
+
+accountController = typeof window.createAtlasAccountController === "function"
+  ? window.createAtlasAccountController()
+  : null;
+
+communityController = typeof window.createAtlasCommunityController === "function"
+  ? window.createAtlasCommunityController({
+      account: accountController,
+      buildHash,
+      escapeHtml,
+      formatSyncDate,
+      renderPillRow,
+      resolveSavedItem
+    })
+  : null;
+
+if (accountController) {
+  accountController.subscribe(() => {
+    render();
+  });
+  void accountController.bootstrap();
+}
+
 window.addEventListener("hashchange", render);
+window.addEventListener("resize", handleResize);
 document.addEventListener("click", handleClick);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
+document.addEventListener("submit", handleSubmit);
 
 if (!location.hash) {
   navigate("builds");

@@ -1,0 +1,18 @@
+[Unit]
+Description=Atlas Battlegrounds web app
+After=network.target
+
+[Service]
+Type=simple
+User=atlasbg
+Group=atlasbg
+WorkingDirectory=/opt/atlas-battlegrounds/current
+EnvironmentFile=/etc/atlas-battlegrounds/atlas-battlegrounds.env
+StateDirectory=atlas-battlegrounds
+StateDirectoryMode=0750
+ExecStart=/opt/atlas-battlegrounds/node/bin/node --no-warnings=ExperimentalWarning server.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -316,7 +316,7 @@ window.BATTLEGROUNDS_BUILDS = {
       "logoArt": {
         "cardName": "Showy Cyclist",
         "position": "50% 18%",
-        "scale": 1.82
+        "scale": 3.04
       }
     },
     {
@@ -360,7 +360,7 @@ window.BATTLEGROUNDS_BUILDS = {
       "logoArt": {
         "cardName": "Apexis Guardian",
         "position": "51% 18%",
-        "scale": 1.82
+        "scale": 3.04
       }
     },
     {
@@ -400,8 +400,8 @@ window.BATTLEGROUNDS_BUILDS = {
       ],
       "logoArt": {
         "cardName": "Silithid Burrower",
-        "position": "50% 18%",
-        "scale": 1.84
+        "position": "50% 17%",
+        "scale": 3.08
       }
     },
     {
@@ -444,7 +444,7 @@ window.BATTLEGROUNDS_BUILDS = {
       "logoArt": {
         "cardName": "Needling Crone",
         "position": "50% 18%",
-        "scale": 1.84
+        "scale": 3.08
       }
     },
     {
@@ -487,7 +487,7 @@ window.BATTLEGROUNDS_BUILDS = {
       "logoArt": {
         "cardName": "Charging Czarina",
         "position": "52% 18%",
-        "scale": 1.82
+        "scale": 3.04
       }
     },
     {
@@ -527,8 +527,8 @@ window.BATTLEGROUNDS_BUILDS = {
       ],
       "logoArt": {
         "cardName": "Catacomb Crasher",
-        "position": "50% 18%",
-        "scale": 1.82
+        "position": "50% 17%",
+        "scale": 3.04
       }
     },
     {
@@ -572,7 +572,7 @@ window.BATTLEGROUNDS_BUILDS = {
       "logoArt": {
         "cardName": "Shadowdancer",
         "position": "50% 18%",
-        "scale": 1.82
+        "scale": 3.04
       }
     },
     {
@@ -616,7 +616,7 @@ window.BATTLEGROUNDS_BUILDS = {
       "logoArt": {
         "cardName": "Paint Smudger",
         "position": "51% 18%",
-        "scale": 1.82
+        "scale": 3.04
       }
     },
     {
@@ -657,8 +657,8 @@ window.BATTLEGROUNDS_BUILDS = {
       ],
       "logoArt": {
         "cardName": "Burgeoning Whelp",
-        "position": "50% 18%",
-        "scale": 1.86
+        "position": "50% 19%",
+        "scale": 3.12
       }
     },
     {
@@ -700,8 +700,8 @@ window.BATTLEGROUNDS_BUILDS = {
       ],
       "logoArt": {
         "cardName": "Rabid Panther",
-        "position": "50% 18%",
-        "scale": 1.84
+        "position": "50% 17%",
+        "scale": 3.08
       }
     },
     {
@@ -743,8 +743,8 @@ window.BATTLEGROUNDS_BUILDS = {
       ],
       "logoArt": {
         "cardName": "Carapace Raiser",
-        "position": "50% 18%",
-        "scale": 1.84
+        "position": "50% 17%",
+        "scale": 3.08
       }
     }
   ]
