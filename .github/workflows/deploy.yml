@@ -1,0 +1,104 @@
+name: Deploy Atlas
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: atlas-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ vars.ATLAS_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.ATLAS_DEPLOY_USER }}
+      APP_ROOT: /opt/atlas-battlegrounds
+      RELEASE_ID: ${{ github.sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate deploy settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_HOST}"
+          test -n "${DEPLOY_USER}"
+          test -n "${{ secrets.ATLAS_DEPLOY_SSH_KEY }}"
+
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "atlas-${RELEASE_ID}.tar.gz" \
+            --exclude=.git \
+            --exclude=.github \
+            -C "${GITHUB_WORKSPACE}" .
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.ATLAS_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp "atlas-${RELEASE_ID}.tar.gz" "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/atlas-${RELEASE_ID}.tar.gz"
+
+      - name: Deploy release on droplet
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "RELEASE_ID='${RELEASE_ID}' APP_ROOT='${APP_ROOT}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          release_dir="${APP_ROOT}/releases/${RELEASE_ID}"
+          archive_path="/tmp/atlas-${RELEASE_ID}.tar.gz"
+
+          mkdir -p "${APP_ROOT}/releases"
+          rm -rf "${release_dir}"
+          mkdir -p "${release_dir}"
+          tar -xzf "${archive_path}" -C "${release_dir}"
+          chown -R atlasbg:atlasbg "${release_dir}"
+
+          if [ -d "${APP_ROOT}/current" ] && [ ! -L "${APP_ROOT}/current" ]; then
+            bootstrap_dir="${APP_ROOT}/releases/bootstrap-$(date +%Y%m%d%H%M%S)"
+            mv "${APP_ROOT}/current" "${bootstrap_dir}"
+            chown -R atlasbg:atlasbg "${bootstrap_dir}"
+          fi
+
+          ln -sfn "${release_dir}" "${APP_ROOT}/current"
+          cp "${release_dir}/deploy/systemd/atlas-battlegrounds.service" /etc/systemd/system/atlas-battlegrounds.service
+          systemctl daemon-reload
+          systemctl restart atlas-battlegrounds
+
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://127.0.0.1:4173/api/session >/dev/null; then
+              break
+            fi
+            if [ "${attempt}" = "10" ]; then
+              echo "Atlas health check failed after deploy." >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          rm -f "${archive_path}"
+          ls -1dt "${APP_ROOT}"/releases/* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+          EOF
+
+      - name: Smoke check public site
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location "https://atlasbattlegrounds.com/api/session" >/dev/null

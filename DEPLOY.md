@@ -125,3 +125,21 @@ sudo journalctl -u atlas-battlegrounds -n 100 --no-pager
 - The SQLite database is stored outside the repo so deploys do not wipe user data.
 - Secure cookies are controlled by `ATLAS_SECURE_COOKIES=true`, which should stay enabled once HTTPS is live.
 - `ads.txt.example` should be copied to `ads.txt` when AdSense is configured.
+
+## GitHub Actions deploys
+
+Once the initial droplet bootstrap is complete, pushes to `master` can deploy automatically through GitHub Actions using `.github/workflows/deploy.yml`.
+
+Required repository configuration:
+
+- Repository variable `ATLAS_DEPLOY_HOST`
+- Repository variable `ATLAS_DEPLOY_USER`
+- Repository secret `ATLAS_DEPLOY_SSH_KEY`
+
+The workflow assumes:
+
+- Atlas already has a working systemd service on the droplet
+- nginx/TLS are already configured on the droplet
+- releases are stored under `/opt/atlas-battlegrounds/releases`
+
+The deploy job uploads the tracked repo contents, switches the `current` symlink, restarts `atlas-battlegrounds`, and runs a health check against `http://127.0.0.1:4173/api/session`.
