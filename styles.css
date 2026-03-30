@@ -2237,6 +2237,14 @@ img {
   flex-wrap: wrap;
 }
 
+.community-profile-summary {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+  justify-items: start;
+  justify-content: stretch;
+}
+
 .community-author {
   display: flex;
   align-items: center;
@@ -2327,6 +2335,58 @@ img {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.community-route-strip {
+  margin-top: 6px;
+}
+
+.community-route-strip .tab-button {
+  text-decoration: none;
+}
+
+.community-page-hero {
+  align-items: start;
+}
+
+.community-action-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.community-action-card .button-link {
+  width: fit-content;
+}
+
+.community-profile-shell {
+  display: grid;
+  gap: 24px;
+}
+
+.community-profile-hero {
+  display: grid;
+  gap: 16px;
+  justify-items: start;
+}
+
+.community-profile-shell .community-avatar.is-large {
+  width: 120px;
+  height: 120px;
+}
+
+.community-profile-meta,
+.community-profile-bio {
+  margin: 0;
+}
+
+.community-profile-meta {
+  color: var(--muted);
+}
+
+.community-profile-bio {
+  max-width: 62ch;
+  line-height: 1.7;
 }
 
 .community-profile-stats {
@@ -2791,6 +2851,11 @@ img {
 
   .community-admin-user-controls {
     grid-template-columns: 1fr;
+  }
+
+  .community-profile-shell .community-avatar.is-large {
+    width: 104px;
+    height: 104px;
   }
 
   .build-table {

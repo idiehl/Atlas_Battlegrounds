@@ -174,6 +174,7 @@ const VIEWABLE_PAGES = new Set([
   "builds",
   "combos",
   "community",
+  "account",
   "support",
   "heroes",
   "minions",
@@ -1596,7 +1597,10 @@ async function handleApi(request, response, url) {
       const category = ["all", "build", "combo", "general"].includes(requestedCategory)
         ? requestedCategory
         : "all";
-      const profileId = Number(url.searchParams.get("profileId")) || null;
+      const requestedProfile = sanitizeText(url.searchParams.get("profile"), 16).toLowerCase();
+      const profileId = requestedProfile === "self" && viewer
+        ? viewer.id
+        : Number(url.searchParams.get("profileId")) || null;
       sendJson(response, 200, getBootstrapPayload({ viewer, category, profileId }));
       return;
     }

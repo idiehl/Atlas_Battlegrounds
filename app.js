@@ -47,6 +47,7 @@ const CATEGORY_PAGES = [
 const BUILDS_PAGE = { key: "builds", label: "Builds", kind: "builds" };
 const COMBOS_PAGE = { key: "combos", label: "Combos", kind: "combos" };
 const COMMUNITY_PAGE = { key: "community", label: "Community", kind: "community" };
+const ACCOUNT_PAGE = { key: "account", label: "Account", kind: "account" };
 const SUPPORT_PAGE = { key: "support", label: "Support", kind: "support" };
 const COMBO_BUCKETS = [
   {
@@ -70,6 +71,7 @@ const NAV_PAGES = [
   BUILDS_PAGE,
   COMBOS_PAGE,
   COMMUNITY_PAGE,
+  ACCOUNT_PAGE,
   SUPPORT_PAGE,
   ...CATEGORY_PAGES.map((entry) => ({
     key: entry.key,
@@ -86,6 +88,9 @@ const LEGACY_PAGE_ALIASES = new Map([
   ["build", "builds"],
   ["combo", "combos"],
   ["forum", "community"],
+  ["accounts", "account"],
+  ["login", "account"],
+  ["profile", "account"],
   ["donate", "support"],
   ["donation", "support"],
   ["contribute", "support"],
@@ -244,18 +249,31 @@ function escapeHtml(value = "") {
 function parseHash() {
   const parts = location.hash.replace(/^#/, "").split("/").filter(Boolean);
   const rawPage = parts[0] ?? "builds";
-  const id = parts[1] ? Number(parts[1]) : null;
+  let rawSegments = parts.slice(1);
   let normalizedPage = LEGACY_PAGE_ALIASES.get(rawPage) ?? rawPage;
 
-  if (rawPage === "cards" && Number.isFinite(id) && cardsById.has(id)) {
-    normalizedPage = getPageForCategory(cardsById.get(id).category);
+  if (rawPage === "forum" && rawSegments.length === 0) {
+    rawSegments = ["forum"];
+  }
+
+  if (rawPage === "cards" && Number.isFinite(Number(rawSegments[0])) && cardsById.has(Number(rawSegments[0]))) {
+    normalizedPage = getPageForCategory(cardsById.get(Number(rawSegments[0])).category);
   }
 
   const page = PAGE_BY_KEY.has(normalizedPage) ? normalizedPage : "builds";
+  const segments = [...rawSegments];
+
+  if ((page === "community" || page === "account") && segments.length === 1 && /^\d+$/.test(segments[0])) {
+    segments.unshift("profile");
+  }
+
+  const trailingId = segments.length ? Number(segments.at(-1)) : null;
+  const id = Number.isFinite(trailingId) && String(trailingId) === segments.at(-1) ? trailingId : null;
 
   return {
     page,
-    id: Number.isFinite(id) ? id : null
+    id,
+    segments
   };
 }
 
@@ -295,8 +313,27 @@ function buildHash(page, id = null) {
   return id ? `#/${page}/${id}` : `#/${page}`;
 }
 
+function buildHashParts(page, ...parts) {
+  const normalizedParts = parts
+    .flat()
+    .map((part) => String(part ?? "").trim())
+    .filter(Boolean);
+
+  return normalizedParts.length ? `#/${page}/${normalizedParts.join("/")}` : `#/${page}`;
+}
+
 function navigate(page, id = null) {
   const nextHash = buildHash(page, id);
+  if (location.hash === nextHash) {
+    state.route = parseHash();
+    render();
+    return;
+  }
+  location.hash = nextHash;
+}
+
+function navigateParts(page, ...parts) {
+  const nextHash = buildHashParts(page, ...parts);
   if (location.hash === nextHash) {
     state.route = parseHash();
     render();
@@ -780,7 +817,12 @@ function getMissingBuildCards(entries) {
 function renderNav() {
   refs.nav.innerHTML = NAV_PAGES.map((entry) => {
     const active = state.route.page === entry.key ? " is-active" : "";
-    return `<a class="nav-link${active}" href="${buildHash(entry.key)}">${entry.label}</a>`;
+    const href = entry.key === "community"
+      ? buildHashParts("community", "builds")
+      : entry.key === "account"
+        ? buildHash("account")
+        : buildHash(entry.key);
+    return `<a class="nav-link${active}" href="${href}">${entry.label}</a>`;
   }).join("");
 }
 
@@ -1030,7 +1072,7 @@ function renderCommentComposer(targetType, targetKey, { compact = false } = {}) 
     return `
       <div class="comment-empty">
         <p class="comment-helper">Log in to join the conversation on this item.</p>
-        <a class="button-link" href="${buildHash("community")}">Log In To Comment</a>
+        <a class="button-link" href="${buildHash("account")}">Log In To Comment</a>
       </div>
     `;
   }
@@ -1151,7 +1193,7 @@ function renderSaveControl({
   }
 
   if (!accountState.session) {
-    return `<a class="${classes}" href="${buildHash("community")}">Log In To Save</a>`;
+    return `<a class="${classes}" href="${buildHash("account")}">Log In To Save</a>`;
   }
 
   const pending = accountController.isPending(normalizedType, normalizedKey);
@@ -1792,13 +1834,14 @@ function renderCombosView() {
 }
 
 function renderCommunityView() {
-  refs.communityView.classList.toggle("is-active", state.route.page === "community");
+  const isSocialPage = state.route.page === "community" || state.route.page === "account";
+  refs.communityView.classList.toggle("is-active", isSocialPage);
   if (!communityController) {
-    refs.communityView.innerHTML = state.route.page === "community"
+    refs.communityView.innerHTML = isSocialPage
       ? `
         <div class="empty-state">
-          <h3>Community Unavailable</h3>
-          <p>The Community controller did not load. Reload the page and try again.</p>
+          <h3>Atlas Social Unavailable</h3>
+          <p>The social controller did not load. Reload the page and try again.</p>
         </div>
       `
       : "";
@@ -1806,8 +1849,8 @@ function renderCommunityView() {
   }
 
   communityController.render({
-    isActive: state.route.page === "community",
-    routeId: state.route.page === "community" ? state.route.id : null,
+    isActive: isSocialPage,
+    route: state.route,
     mount: refs.communityView
   });
 }
@@ -3249,16 +3292,38 @@ function ensureCommentsForActiveRoute() {
 }
 
 function trackRouteView() {
-  const routeKey = `${state.route.page}:${state.route.id ?? ""}`;
+  const routeKey = `${state.route.page}:${state.route.segments?.join("/") ?? ""}:${state.route.id ?? ""}`;
   if (state.analytics.lastRouteKey === routeKey) {
     return;
   }
 
   state.analytics.lastRouteKey = routeKey;
+  const telemetry = getTelemetryRoute();
   postTelemetry("/api/analytics/view", {
+    page: telemetry.page,
+    routeId: telemetry.routeId
+  });
+}
+
+function getTelemetryRoute() {
+  if (state.route.page === "community") {
+    return {
+      page: "community",
+      routeId: state.route.segments?.[0] === "profile" && state.route.id != null ? String(state.route.id) : ""
+    };
+  }
+
+  if (state.route.page === "account") {
+    return {
+      page: "account",
+      routeId: ""
+    };
+  }
+
+  return {
     page: state.route.page,
     routeId: state.route.id == null ? "" : String(state.route.id)
-  });
+  };
 }
 
 function render() {
@@ -3583,8 +3648,10 @@ communityController = typeof window.createAtlasCommunityController === "function
   ? window.createAtlasCommunityController({
       account: accountController,
       buildHash,
+      buildHashParts,
       escapeHtml,
       formatSyncDate,
+      navigateParts,
       renderPillRow,
       resolveSavedItem
     })
