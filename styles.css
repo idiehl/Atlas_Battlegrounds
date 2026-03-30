@@ -2172,7 +2172,8 @@ img {
 }
 
 .community-auth-grid,
-.community-message-shell {
+.community-message-shell,
+.community-security-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
@@ -2357,6 +2358,69 @@ img {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
+}
+
+.community-admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.community-admin-metric {
+  min-height: 100%;
+}
+
+.community-admin-breakdown-grid,
+.community-user-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.community-admin-panel,
+.community-user-card {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.025)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.community-admin-route-list,
+.community-admin-event-list {
+  display: grid;
+  gap: 10px;
+}
+
+.community-admin-route-item,
+.community-admin-event-item,
+.community-user-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.community-user-stats {
+  justify-content: flex-start;
+}
+
+.community-user-stats span {
+  color: var(--muted);
+}
+
+.community-admin-user-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .community-library-grid {
@@ -2691,7 +2755,8 @@ img {
   }
 
   .community-auth-grid,
-  .community-message-shell {
+  .community-message-shell,
+  .community-security-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2705,8 +2770,11 @@ img {
   }
 
   .community-library-grid,
+  .community-admin-breakdown-grid,
+  .community-admin-overview-grid,
   .community-profile-stats,
   .community-submission-grid,
+  .community-user-grid,
   .support-option-grid,
   .support-use-grid,
   .support-note-grid {
@@ -2718,6 +2786,10 @@ img {
   }
 
   .community-submission-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .community-admin-user-controls {
     grid-template-columns: 1fr;
   }
 

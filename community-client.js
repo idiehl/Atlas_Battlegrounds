@@ -24,6 +24,7 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
     approvedComboSubmissions: [],
     mySubmissions: [],
     reviewQueue: [],
+    adminDashboard: null,
     featuredMembers: [],
     selectedProfile: null,
     conversation: [],
@@ -108,6 +109,39 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
     }[status] ?? status;
   }
 
+  function routePageLabel(page) {
+    return {
+      builds: "Builds",
+      combos: "Combos",
+      community: "Community",
+      support: "Support",
+      heroes: "Heroes",
+      minions: "Minions",
+      quests: "Quests",
+      rewards: "Rewards",
+      anomalies: "Anomalies",
+      spells: "Spells",
+      trinkets: "Trinkets",
+      timewarp: "Timewarp"
+    }[page] ?? page;
+  }
+
+  function eventLabel(eventType) {
+    return {
+      route_view: "Route View",
+      auth_login: "Login",
+      auth_register: "Registration",
+      community_post_create: "Community Post",
+      comment_create: "Comment",
+      direct_message_create: "Direct Message",
+      submission_create: "Submission",
+      submission_review: "Submission Review",
+      profile_update: "Profile Update",
+      admin_user_manage: "User Management",
+      password_change: "Password Change"
+    }[eventType] ?? eventType;
+  }
+
   function renderPillMarkup(items, { muted = true, className = "" } = {}) {
     const values = (items ?? []).map((item) => String(item || "").trim()).filter(Boolean);
     if (!values.length) {
@@ -176,6 +210,7 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
       state.approvedComboSubmissions = payload.approvedComboSubmissions ?? [];
       state.mySubmissions = payload.mySubmissions ?? [];
       state.reviewQueue = payload.reviewQueue ?? [];
+      state.adminDashboard = payload.adminDashboard ?? null;
       state.featuredMembers = payload.featuredMembers ?? [];
       state.selectedProfile = payload.selectedProfile ?? null;
       state.conversation = payload.conversation ?? [];
@@ -320,6 +355,261 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
             <p class="community-helper">Community is database-backed now, so posts, buddies, and messages persist across sessions.</p>
           </form>
         </div>
+      </section>
+    `;
+  }
+
+  function renderSecuritySection() {
+    if (!state.session) {
+      return "";
+    }
+
+    return `
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Account Security</p>
+            <h2 class="section-title">Change Password</h2>
+            <p class="filter-helper">Use this after first login so the live admin account is controlled from a password only you know.</p>
+          </div>
+        </div>
+        <div class="community-security-grid">
+          <form class="community-form-card" id="community-password-form">
+            <span class="detail-label">Update Password</span>
+            <label class="community-field">
+              <span class="filter-label">Current Password</span>
+              <input name="currentPassword" type="password" minlength="8" placeholder="Current password">
+            </label>
+            <label class="community-field">
+              <span class="filter-label">New Password</span>
+              <input name="newPassword" type="password" minlength="8" placeholder="At least 8 characters">
+            </label>
+            <label class="community-field">
+              <span class="filter-label">Confirm New Password</span>
+              <input name="confirmPassword" type="password" minlength="8" placeholder="Repeat new password">
+            </label>
+            <button class="button-link is-primary" type="submit">Update Password</button>
+          </form>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderAdminEventCard(event) {
+    const actorLabel = event.actor?.displayName || event.actor?.username || "Guest";
+    const details = [];
+
+    if (event.routePage) {
+      details.push(`${routePageLabel(event.routePage)}${event.routeId ? ` / ${event.routeId}` : ""}`);
+    }
+    if (event.subject?.username) {
+      details.push(`target @${event.subject.username}`);
+    }
+    if (event.meta?.status) {
+      details.push(`status ${event.meta.status}`);
+    }
+    if (event.meta?.role) {
+      details.push(`role ${event.meta.role}`);
+    }
+    if (typeof event.meta?.isDisabled === "boolean") {
+      details.push(event.meta.isDisabled ? "suspended" : "active");
+    }
+
+    return `
+      <article class="community-admin-event-item">
+        <div class="community-post-meta">
+          <strong>${escape(eventLabel(event.eventType))}</strong>
+          <span class="community-post-date">${escape(formatDate(event.createdAt))}</span>
+        </div>
+        <p>${escape(actorLabel)}${details.length ? ` • ${escape(details.join(" • "))}` : ""}</p>
+      </article>
+    `;
+  }
+
+  function renderAdminOverviewSection() {
+    const dashboard = state.adminDashboard;
+    if (!state.session?.isAdmin || !dashboard) {
+      return "";
+    }
+
+    const overview = dashboard.overview ?? {};
+    const routeViews = dashboard.routeViews ?? [];
+    const recentEvents = dashboard.recentEvents ?? [];
+
+    return `
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Admin Dashboard</p>
+            <h2 class="section-title">Site Overview</h2>
+            <p class="filter-helper">This is a lightweight moderation and activity view driven by Atlas app events, not a third-party analytics suite.</p>
+          </div>
+        </div>
+
+        <div class="community-admin-overview-grid">
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Views (7d)</span>
+            <strong>${escape(String(overview.views7d || 0))}</strong>
+            <p>Tracked Atlas route views.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Profiles (7d)</span>
+            <strong>${escape(String(overview.profileViews7d || 0))}</strong>
+            <p>Community profile opens.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Logins (7d)</span>
+            <strong>${escape(String(overview.logins7d || 0))}</strong>
+            <p>Successful account logins.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Registrations (7d)</span>
+            <strong>${escape(String(overview.registrations7d || 0))}</strong>
+            <p>New account creation.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Active Sessions</span>
+            <strong>${escape(String(overview.activeSessions || 0))}</strong>
+            <p>Live sessions not yet expired.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Users</span>
+            <strong>${escape(String(overview.activeUsers || 0))}</strong>
+            <p>${escape(String(overview.suspendedUsers || 0))} suspended.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Pending Review</span>
+            <strong>${escape(String(overview.pendingSubmissions || 0))}</strong>
+            <p>Build and combo submissions waiting on moderation.</p>
+          </article>
+          <article class="summary-card community-admin-metric">
+            <span class="summary-label">Comments (7d)</span>
+            <strong>${escape(String(overview.comments7d || 0))}</strong>
+            <p>New official-item comments.</p>
+          </article>
+        </div>
+
+        <div class="community-admin-breakdown-grid">
+          <article class="community-admin-panel">
+            <div class="community-post-meta">
+              <strong>Views By Page</strong>
+              <span class="community-post-date">Last 7 days</span>
+            </div>
+            ${routeViews.length ? `
+              <div class="community-admin-route-list">
+                ${routeViews.map((entry) => `
+                  <div class="community-admin-route-item">
+                    <span>${escape(routePageLabel(entry.page))}</span>
+                    <strong>${escape(String(entry.count))}</strong>
+                  </div>
+                `).join("")}
+              </div>
+            ` : `<p class="community-helper">No route view events yet.</p>`}
+          </article>
+
+          <article class="community-admin-panel">
+            <div class="community-post-meta">
+              <strong>Recent Activity</strong>
+              <span class="community-post-date">Latest events</span>
+            </div>
+            ${recentEvents.length ? `
+              <div class="community-admin-event-list">
+                ${recentEvents.map((event) => renderAdminEventCard(event)).join("")}
+              </div>
+            ` : `<p class="community-helper">No tracked events yet.</p>`}
+          </article>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderAdminUserCard(user) {
+    const viewingSelf = Boolean(state.session && state.session.id === user.id);
+
+    return `
+      <article class="community-user-card">
+        <div class="community-submission-meta">
+          <div class="community-author">
+            ${getAvatarMarkup(user)}
+            <div class="community-author-copy">
+              <strong>${escape(user.displayName)}</strong>
+              <span>@${escape(user.username)} • ${escape(user.email)}</span>
+            </div>
+          </div>
+          <div class="community-post-meta-copy">
+            <span class="pill is-muted">${escape(user.role === "admin" ? "Admin" : "Member")}</span>
+            <span class="community-status-pill ${user.isDisabled ? "is-rejected" : "is-approved"}">
+              ${user.isDisabled ? "Suspended" : "Active"}
+            </span>
+          </div>
+        </div>
+
+        <div class="community-user-stats">
+          <span>${escape(String(user.postCount || 0))} posts</span>
+          <span>${escape(String(user.commentCount || 0))} comments</span>
+          <span>${escape(String(user.submissionCount || 0))} submissions</span>
+          <span>${escape(String(user.activeSessionCount || 0))} sessions</span>
+        </div>
+
+        <p class="community-helper">
+          Created ${escape(formatDate(user.createdAt))}
+          ${user.lastLoginAt ? ` • Last login ${escape(formatDate(user.lastLoginAt))}` : " • No successful login recorded yet"}
+        </p>
+
+        <form class="community-review-form" data-community-action="manage-user" data-user-id="${user.id}">
+          <div class="community-admin-user-controls">
+            <label class="community-field">
+              <span class="filter-label">Role</span>
+              <select name="role" ${viewingSelf ? "disabled" : ""}>
+                <option value="member" ${user.role === "member" ? "selected" : ""}>Member</option>
+                <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin</option>
+              </select>
+            </label>
+            <label class="community-field">
+              <span class="filter-label">Account Status</span>
+              <select name="accountState" ${viewingSelf ? "disabled" : ""}>
+                <option value="active" ${!user.isDisabled ? "selected" : ""}>Active</option>
+                <option value="disabled" ${user.isDisabled ? "selected" : ""}>Suspended</option>
+              </select>
+            </label>
+          </div>
+          <label class="community-field">
+            <span class="filter-label">Admin Notes</span>
+            <textarea name="adminNote" rows="4" maxlength="400" placeholder="Internal moderation note for this user.">${escape(user.adminNote || "")}</textarea>
+          </label>
+          ${viewingSelf ? `<p class="community-helper">Your own admin role and suspension state cannot be changed from this panel.</p>` : ""}
+          <button class="button-link is-primary" type="submit">Save User Settings</button>
+        </form>
+      </article>
+    `;
+  }
+
+  function renderAdminUsersSection() {
+    const dashboard = state.adminDashboard;
+    if (!state.session?.isAdmin || !dashboard) {
+      return "";
+    }
+
+    const users = dashboard.users ?? [];
+    return `
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Admin Dashboard</p>
+            <h2 class="section-title">User Management</h2>
+            <p class="filter-helper">Promote members, suspend problem accounts, and keep internal moderation notes on active users.</p>
+          </div>
+        </div>
+        ${users.length ? `
+          <div class="community-user-grid">
+            ${users.map((user) => renderAdminUserCard(user)).join("")}
+          </div>
+        ` : `
+          <div class="empty-state">
+            <h3>No Users Found</h3>
+            <p>User management data will appear here after the first account is created.</p>
+          </div>
+        `}
       </section>
     `;
   }
@@ -961,6 +1251,9 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
         ` : ""}
 
         ${renderAuthSection()}
+        ${renderSecuritySection()}
+        ${renderAdminOverviewSection()}
+        ${renderAdminUsersSection()}
         ${renderLibrarySection()}
         ${renderSubmissionToolsSection()}
         ${renderMySubmissionsSection()}
@@ -989,15 +1282,19 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
       return false;
     }
 
-    if (![
+    const supportedFormIds = [
       "community-register-form",
       "community-login-form",
+      "community-password-form",
       "community-post-form",
       "community-profile-form",
       "community-message-form",
       "community-build-submission-form",
       "community-combo-submission-form"
-    ].includes(form.id) && form.dataset.communityAction !== "review-submission") {
+    ];
+    const supportedActions = new Set(["review-submission", "manage-user"]);
+
+    if (!supportedFormIds.includes(form.id) && !supportedActions.has(form.dataset.communityAction || "")) {
       return false;
     }
 
@@ -1017,6 +1314,19 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
           await api("/api/auth/login", { method: "POST", body: values });
           await deps.account?.bootstrap?.({ force: true });
           state.notice = "Logged in.";
+        } else if (form.id === "community-password-form") {
+          if (values.newPassword !== values.confirmPassword) {
+            throw new Error("New password and confirmation do not match.");
+          }
+          await api("/api/auth/password", {
+            method: "POST",
+            body: {
+              currentPassword: values.currentPassword,
+              newPassword: values.newPassword
+            }
+          });
+          form.reset();
+          state.notice = "Password updated.";
         } else if (form.id === "community-post-form") {
           await api("/api/community/posts", { method: "POST", body: values });
           form.reset();
@@ -1054,6 +1364,17 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
           await api(`/api/community/submissions/${submissionId}/review`, { method: "POST", body: values });
           form.reset();
           state.notice = "Submission review saved.";
+        } else if (form.dataset.communityAction === "manage-user") {
+          const userId = Number(form.dataset.userId);
+          await api(`/api/admin/users/${userId}`, {
+            method: "POST",
+            body: {
+              role: values.role,
+              isDisabled: values.accountState === "disabled",
+              adminNote: values.adminNote
+            }
+          });
+          state.notice = "User settings updated.";
         }
 
         await refresh(true);

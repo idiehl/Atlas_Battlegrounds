@@ -33,10 +33,13 @@ db.exec(`
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'member',
+    is_disabled INTEGER NOT NULL DEFAULT 0,
+    admin_note TEXT NOT NULL DEFAULT '',
     display_name TEXT NOT NULL,
     avatar_url TEXT NOT NULL DEFAULT '',
     status_text TEXT NOT NULL DEFAULT '',
     bio TEXT NOT NULL DEFAULT '',
+    last_login_at TEXT DEFAULT NULL,
     created_at TEXT NOT NULL
   );
 
@@ -113,6 +116,24 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_item_comments_target
     ON item_comments (target_type, target_key, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS analytics_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    route_page TEXT NOT NULL DEFAULT '',
+    route_id TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    subject_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    ip_hash TEXT NOT NULL DEFAULT '',
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_analytics_events_type_created
+    ON analytics_events (event_type, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_analytics_events_route_created
+    ON analytics_events (route_page, created_at DESC);
 `);
 
 const mimeByExtension = new Map([
@@ -149,8 +170,24 @@ const SAVABLE_ITEM_TYPES = new Set([
 ]);
 const SUBMISSION_TYPES = new Set(["build", "combo"]);
 const SUBMISSION_STATUSES = new Set(["pending", "approved", "rejected"]);
+const VIEWABLE_PAGES = new Set([
+  "builds",
+  "combos",
+  "community",
+  "support",
+  "heroes",
+  "minions",
+  "quests",
+  "rewards",
+  "anomalies",
+  "spells",
+  "trinkets",
+  "timewarp"
+]);
+const rateLimitState = new Map();
 
 ensureUserRoleColumn();
+ensureUserModerationColumns();
 cleanupExpiredSessions();
 seedDatabase();
 ensureAdminAccount();
@@ -195,6 +232,96 @@ function normalizeUsername(value = "") {
 
 function sanitizeText(value = "", maxLength = 280) {
   return String(value).trim().slice(0, maxLength);
+}
+
+function parseJsonObject(value = "", fallback = {}) {
+  try {
+    const parsed = JSON.parse(String(value || ""));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getClientIp(request) {
+  const forwarded = String(request.headers["x-forwarded-for"] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)[0];
+
+  return forwarded || request.socket?.remoteAddress || "";
+}
+
+function hashIpAddress(value = "") {
+  if (!value) {
+    return "";
+  }
+
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 24);
+}
+
+function normalizeAnalyticsPage(value = "") {
+  const normalized = sanitizeText(value, 32).toLowerCase();
+  return VIEWABLE_PAGES.has(normalized) ? normalized : "";
+}
+
+function normalizeAnalyticsRouteId(value = "") {
+  return sanitizeText(value, 48);
+}
+
+function trackEvent({
+  eventType,
+  routePage = "",
+  routeId = "",
+  actorUserId = null,
+  subjectUserId = null,
+  ipAddress = "",
+  meta = {}
+}) {
+  const normalizedEventType = sanitizeText(eventType, 48).toLowerCase();
+  if (!normalizedEventType) {
+    return;
+  }
+
+  db.prepare(`
+    INSERT INTO analytics_events (
+      event_type,
+      route_page,
+      route_id,
+      actor_user_id,
+      subject_user_id,
+      ip_hash,
+      meta_json,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    normalizedEventType,
+    normalizeAnalyticsPage(routePage),
+    normalizeAnalyticsRouteId(routeId),
+    actorUserId,
+    subjectUserId,
+    hashIpAddress(ipAddress),
+    JSON.stringify(meta ?? {}),
+    nowIso()
+  );
+}
+
+function checkRateLimit(request, key, limit, windowMs) {
+  const clientIp = getClientIp(request);
+  const bucketKey = `${key}:${hashIpAddress(clientIp)}`;
+  const now = Date.now();
+  const entry = rateLimitState.get(bucketKey) ?? [];
+  const fresh = entry.filter((timestamp) => now - timestamp < windowMs);
+
+  if (fresh.length >= limit) {
+    rateLimitState.set(bucketKey, fresh);
+    return false;
+  }
+
+  fresh.push(now);
+  rateLimitState.set(bucketKey, fresh);
+  return true;
 }
 
 function normalizeSavedItemType(value = "") {
@@ -336,6 +463,33 @@ function ensureUserRoleColumn() {
   `).run();
 }
 
+function ensureUserModerationColumns() {
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0;");
+  } catch {
+    // Column already exists on upgraded databases.
+  }
+
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN admin_note TEXT NOT NULL DEFAULT '';");
+  } catch {
+    // Column already exists on upgraded databases.
+  }
+
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT DEFAULT NULL;");
+  } catch {
+    // Column already exists on upgraded databases.
+  }
+
+  db.prepare(`
+    UPDATE users
+    SET
+      is_disabled = COALESCE(is_disabled, 0),
+      admin_note = COALESCE(admin_note, '')
+  `).run();
+}
+
 function getAdminBootstrapConfig() {
   const username = normalizeUsername(process.env.ATLAS_ADMIN_USERNAME || "atlas_admin");
   const email = sanitizeText(process.env.ATLAS_ADMIN_EMAIL || "atlas-admin@example.com", 160).toLowerCase();
@@ -363,16 +517,6 @@ function ensureAdminAccount() {
   }
 
   if (existing) {
-    if (admin.password) {
-      const { salt, hash } = hashPassword(admin.password);
-      db.prepare(`
-        UPDATE users
-        SET email = ?, display_name = ?, password_hash = ?, password_salt = ?, role = 'admin'
-        WHERE id = ?
-      `).run(admin.email, admin.displayName, hash, salt, existing.id);
-      return;
-    }
-
     db.prepare(`
       UPDATE users
       SET email = ?, display_name = ?, role = 'admin'
@@ -463,6 +607,7 @@ function buildSessionUser(row) {
     email: row.email,
     role: row.role || "member",
     isAdmin: row.role === "admin",
+    isDisabled: Boolean(row.is_disabled),
     displayName: row.display_name,
     avatarUrl: row.avatar_url,
     statusText: row.status_text,
@@ -487,6 +632,7 @@ function getSessionUser(request) {
       u.username,
       u.email,
       u.role,
+      u.is_disabled,
       u.display_name,
       u.avatar_url,
       u.status_text,
@@ -498,6 +644,42 @@ function getSessionUser(request) {
   `).get(token, nowIso());
 
   return session ? buildSessionUser(session) : null;
+}
+
+function destroySessionsForUser(userId) {
+  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+}
+
+function getUserRowById(userId) {
+  return db.prepare(`
+    SELECT
+      id,
+      username,
+      email,
+      role,
+      is_disabled,
+      admin_note,
+      display_name,
+      avatar_url,
+      status_text,
+      bio,
+      last_login_at,
+      created_at
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+}
+
+function getAuthUserById(userId) {
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+}
+
+function countActiveAdmins() {
+  return db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM users
+    WHERE role = 'admin' AND COALESCE(is_disabled, 0) = 0
+  `).get().count;
 }
 
 function normalizeBuddyPair(leftId, rightId) {
@@ -552,7 +734,7 @@ function getPostById(postId) {
         WHERE l.post_id = p.id
       ), 0) AS like_count
     FROM community_posts p
-    JOIN users u ON u.id = p.user_id
+    JOIN users u ON u.id = p.user_id AND COALESCE(u.is_disabled, 0) = 0
     WHERE p.id = ?
   `).get(postId);
 }
@@ -591,7 +773,7 @@ function listPosts({ category = "all", limit = 40, viewerId = null, authorId = n
         WHERE l.post_id = p.id
       ), 0) AS like_count
     FROM community_posts p
-    JOIN users u ON u.id = p.user_id
+    JOIN users u ON u.id = p.user_id AND COALESCE(u.is_disabled, 0) = 0
     ${whereSql}
     ORDER BY p.created_at DESC, p.id DESC
     LIMIT ?
@@ -659,7 +841,7 @@ function getSubmissionById(submissionId) {
       reviewer.username AS reviewer_username,
       reviewer.display_name AS reviewer_display_name
     FROM community_submissions s
-    JOIN users author ON author.id = s.user_id
+    JOIN users author ON author.id = s.user_id AND COALESCE(author.is_disabled, 0) = 0
     LEFT JOIN users reviewer ON reviewer.id = s.reviewed_by
     WHERE s.id = ?
   `).get(submissionId);
@@ -698,7 +880,7 @@ function listSubmissions({ status = null, submissionType = null, userId = null, 
       reviewer.username AS reviewer_username,
       reviewer.display_name AS reviewer_display_name
     FROM community_submissions s
-    JOIN users author ON author.id = s.user_id
+    JOIN users author ON author.id = s.user_id AND COALESCE(author.is_disabled, 0) = 0
     LEFT JOIN users reviewer ON reviewer.id = s.reviewed_by
     ${whereSql}
     ORDER BY
@@ -742,7 +924,7 @@ function getProfile(profileId, viewerId = null) {
         WHERE b.user_low_id = u.id OR b.user_high_id = u.id
       ), 0) AS buddy_count
     FROM users u
-    WHERE u.id = ?
+    WHERE u.id = ? AND COALESCE(u.is_disabled, 0) = 0
   `).get(profileId);
 
   if (!row) {
@@ -767,6 +949,7 @@ function listFeaturedMembers(viewerId = null) {
       COUNT(p.id) AS post_count
     FROM users u
     LEFT JOIN community_posts p ON p.user_id = u.id
+    WHERE COALESCE(u.is_disabled, 0) = 0
     GROUP BY u.id
     ORDER BY post_count DESC, u.created_at ASC
     LIMIT 6
@@ -932,16 +1115,38 @@ function listCommentThreads(targets, limit = 20) {
 
 function getStats() {
   const [membersRow, postsRow, likesRow, buddiesRow, messageRow] = [
-    db.prepare("SELECT COUNT(*) AS count FROM users").get(),
-    db.prepare("SELECT COUNT(*) AS count FROM community_posts").get(),
+    db.prepare("SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_disabled, 0) = 0").get(),
+    db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM community_posts p
+      JOIN users u ON u.id = p.user_id
+      WHERE COALESCE(u.is_disabled, 0) = 0
+    `).get(),
     db.prepare("SELECT COUNT(*) AS count FROM post_likes").get(),
-    db.prepare("SELECT COUNT(*) AS count FROM buddy_pairs").get(),
-    db.prepare("SELECT COUNT(*) AS count FROM direct_messages").get()
+    db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM buddy_pairs b
+      JOIN users low_user ON low_user.id = b.user_low_id
+      JOIN users high_user ON high_user.id = b.user_high_id
+      WHERE COALESCE(low_user.is_disabled, 0) = 0 AND COALESCE(high_user.is_disabled, 0) = 0
+    `).get(),
+    db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM direct_messages dm
+      JOIN users sender ON sender.id = dm.sender_id
+      JOIN users recipient ON recipient.id = dm.recipient_id
+      WHERE COALESCE(sender.is_disabled, 0) = 0 AND COALESCE(recipient.is_disabled, 0) = 0
+    `).get()
   ];
 
   const categoryRows = db.prepare(`
     SELECT category, COUNT(*) AS count
     FROM community_posts
+    WHERE user_id IN (
+      SELECT id
+      FROM users
+      WHERE COALESCE(is_disabled, 0) = 0
+    )
     GROUP BY category
   `).all();
 
@@ -960,6 +1165,174 @@ function getStats() {
   };
 }
 
+function daysAgoIso(days) {
+  return new Date(Date.now() - days * ONE_DAY_MS).toISOString();
+}
+
+function buildAdminUserRecord(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    email: row.email,
+    displayName: row.display_name,
+    avatarUrl: row.avatar_url || "",
+    role: row.role || "member",
+    isDisabled: Boolean(row.is_disabled),
+    adminNote: row.admin_note || "",
+    statusText: row.status_text || "",
+    bio: row.bio || "",
+    createdAt: row.created_at,
+    lastLoginAt: row.last_login_at,
+    activeSessionCount: row.active_session_count ?? 0,
+    postCount: row.post_count ?? 0,
+    commentCount: row.comment_count ?? 0,
+    submissionCount: row.submission_count ?? 0,
+    messageCount: row.message_count ?? 0
+  };
+}
+
+function listAdminUsers(limit = 120) {
+  const rows = db.prepare(`
+    SELECT
+      u.id,
+      u.username,
+      u.email,
+      u.role,
+      u.is_disabled,
+      u.admin_note,
+      u.display_name,
+      u.avatar_url,
+      u.status_text,
+      u.bio,
+      u.last_login_at,
+      u.created_at,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM sessions s
+        WHERE s.user_id = u.id AND s.expires_at > ?
+      ), 0) AS active_session_count,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM community_posts p
+        WHERE p.user_id = u.id
+      ), 0) AS post_count,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM item_comments c
+        WHERE c.user_id = u.id
+      ), 0) AS comment_count,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM community_submissions s
+        WHERE s.user_id = u.id
+      ), 0) AS submission_count,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM direct_messages dm
+        WHERE dm.sender_id = u.id OR dm.recipient_id = u.id
+      ), 0) AS message_count
+    FROM users u
+    ORDER BY
+      CASE u.role WHEN 'admin' THEN 0 ELSE 1 END,
+      COALESCE(u.is_disabled, 0) ASC,
+      COALESCE(u.last_login_at, u.created_at) DESC,
+      u.id DESC
+    LIMIT ?
+  `).all(nowIso(), limit);
+
+  return rows.map(buildAdminUserRecord);
+}
+
+function buildAdminEventRecord(row) {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    routePage: row.route_page,
+    routeId: row.route_id,
+    createdAt: row.created_at,
+    meta: parseJsonObject(row.meta_json, {}),
+    actor: row.actor_id ? {
+      id: row.actor_id,
+      username: row.actor_username,
+      displayName: row.actor_display_name
+    } : null,
+    subject: row.subject_id ? {
+      id: row.subject_id,
+      username: row.subject_username,
+      displayName: row.subject_display_name
+    } : null
+  };
+}
+
+function listRecentAdminEvents(limit = 24) {
+  const rows = db.prepare(`
+    SELECT
+      e.*,
+      actor.id AS actor_id,
+      actor.username AS actor_username,
+      actor.display_name AS actor_display_name,
+      subject.id AS subject_id,
+      subject.username AS subject_username,
+      subject.display_name AS subject_display_name
+    FROM analytics_events e
+    LEFT JOIN users actor ON actor.id = e.actor_user_id
+    LEFT JOIN users subject ON subject.id = e.subject_user_id
+    ORDER BY e.created_at DESC, e.id DESC
+    LIMIT ?
+  `).all(limit);
+
+  return rows.map(buildAdminEventRecord);
+}
+
+function listAdminRouteViews(days = 7) {
+  return db.prepare(`
+    SELECT route_page, COUNT(*) AS count
+    FROM analytics_events
+    WHERE event_type = 'route_view' AND created_at >= ?
+    GROUP BY route_page
+    ORDER BY count DESC, route_page ASC
+  `).all(daysAgoIso(days)).map((row) => ({
+    page: row.route_page,
+    count: row.count
+  }));
+}
+
+function getAdminOverview() {
+  const since = daysAgoIso(7);
+
+  return {
+    users: db.prepare("SELECT COUNT(*) AS count FROM users").get().count,
+    activeUsers: db.prepare("SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_disabled, 0) = 0").get().count,
+    suspendedUsers: db.prepare("SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_disabled, 0) = 1").get().count,
+    admins: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND COALESCE(is_disabled, 0) = 0").get().count,
+    activeSessions: db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?").get(nowIso()).count,
+    posts: db.prepare("SELECT COUNT(*) AS count FROM community_posts").get().count,
+    comments: db.prepare("SELECT COUNT(*) AS count FROM item_comments").get().count,
+    submissions: db.prepare("SELECT COUNT(*) AS count FROM community_submissions").get().count,
+    pendingSubmissions: db.prepare("SELECT COUNT(*) AS count FROM community_submissions WHERE status = 'pending'").get().count,
+    views7d: db.prepare("SELECT COUNT(*) AS count FROM analytics_events WHERE event_type = 'route_view' AND created_at >= ?").get(since).count,
+    profileViews7d: db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM analytics_events
+      WHERE event_type = 'route_view' AND route_page = 'community' AND route_id <> '' AND created_at >= ?
+    `).get(since).count,
+    logins7d: db.prepare("SELECT COUNT(*) AS count FROM analytics_events WHERE event_type = 'auth_login' AND created_at >= ?").get(since).count,
+    registrations7d: db.prepare("SELECT COUNT(*) AS count FROM analytics_events WHERE event_type = 'auth_register' AND created_at >= ?").get(since).count,
+    posts7d: db.prepare("SELECT COUNT(*) AS count FROM analytics_events WHERE event_type = 'community_post_create' AND created_at >= ?").get(since).count,
+    comments7d: db.prepare("SELECT COUNT(*) AS count FROM analytics_events WHERE event_type = 'comment_create' AND created_at >= ?").get(since).count,
+    messages7d: db.prepare("SELECT COUNT(*) AS count FROM analytics_events WHERE event_type = 'direct_message_create' AND created_at >= ?").get(since).count
+  };
+}
+
+function getAdminDashboardPayload() {
+  return {
+    overview: getAdminOverview(),
+    routeViews: listAdminRouteViews(7),
+    recentEvents: listRecentAdminEvents(24),
+    users: listAdminUsers(120)
+  };
+}
+
 function getBootstrapPayload({ viewer, category, profileId }) {
   return {
     session: viewer,
@@ -969,6 +1342,7 @@ function getBootstrapPayload({ viewer, category, profileId }) {
     approvedComboSubmissions: listSubmissions({ status: "approved", submissionType: "combo", limit: 12 }),
     mySubmissions: viewer ? listSubmissions({ userId: viewer.id, limit: 30 }) : [],
     reviewQueue: viewer?.isAdmin ? listSubmissions({ status: "pending", limit: 40 }) : [],
+    adminDashboard: viewer?.isAdmin ? getAdminDashboardPayload() : null,
     featuredMembers: listFeaturedMembers(viewer?.id ?? null),
     selectedProfile: profileId ? getProfile(profileId, viewer?.id ?? null) : null,
     conversation: profileId && viewer ? getConversation(viewer.id, profileId) : []
@@ -1201,8 +1575,17 @@ async function handleApi(request, response, url) {
   const viewer = getSessionUser(request);
   const method = request.method || "GET";
   const pathname = url.pathname;
+  const clientIp = getClientIp(request);
 
   try {
+    if (viewer?.isDisabled) {
+      const cookies = parseCookies(request.headers.cookie);
+      destroySession(cookies.atlas_session);
+      clearSessionCookie(response);
+      sendError(response, 403, "This account has been disabled. Contact an admin if you think this is a mistake.");
+      return;
+    }
+
     if (method === "GET" && pathname === "/api/session") {
       sendJson(response, 200, { session: viewer });
       return;
@@ -1236,7 +1619,39 @@ async function handleApi(request, response, url) {
       return;
     }
 
+    if (method === "POST" && pathname === "/api/analytics/view") {
+      if (!checkRateLimit(request, "analytics-view", 80, 60 * 1000)) {
+        sendError(response, 429, "Too many analytics events from this client. Slow down.");
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      const page = normalizeAnalyticsPage(body.page);
+      const routeId = normalizeAnalyticsRouteId(body.routeId);
+
+      if (!page) {
+        sendError(response, 400, "Analytics page is invalid.");
+        return;
+      }
+
+      trackEvent({
+        eventType: "route_view",
+        routePage: page,
+        routeId,
+        actorUserId: viewer?.id ?? null,
+        ipAddress: clientIp
+      });
+
+      sendJson(response, 202, { ok: true });
+      return;
+    }
+
     if (method === "POST" && pathname === "/api/auth/register") {
+      if (!checkRateLimit(request, "auth-register", 8, 15 * 60 * 1000)) {
+        sendError(response, 429, "Too many registration attempts. Try again later.");
+        return;
+      }
+
       const body = await readJsonBody(request);
       const username = normalizeUsername(body.username);
       const email = sanitizeText(body.email, 160).toLowerCase();
@@ -1279,13 +1694,25 @@ async function handleApi(request, response, url) {
         )
         VALUES (?, ?, ?, ?, 'member', ?, '', '', '', ?)
       `).run(username, email, hash, salt, displayName || username, createdAt);
-      const token = createSession(Number(result.lastInsertRowid));
+      const userId = Number(result.lastInsertRowid);
+      const token = createSession(userId);
+      trackEvent({
+        eventType: "auth_register",
+        actorUserId: userId,
+        subjectUserId: userId,
+        ipAddress: clientIp
+      });
       setSessionCookie(response, token);
       sendJson(response, 201, { session: getSessionUser({ headers: { cookie: `atlas_session=${token}` } }) });
       return;
     }
 
     if (method === "POST" && pathname === "/api/auth/login") {
+      if (!checkRateLimit(request, "auth-login", 20, 10 * 60 * 1000)) {
+        sendError(response, 429, "Too many login attempts. Try again in a few minutes.");
+        return;
+      }
+
       const body = await readJsonBody(request);
       const identifier = sanitizeText(body.identifier, 160).toLowerCase();
       const password = String(body.password || "");
@@ -1299,6 +1726,20 @@ async function handleApi(request, response, url) {
         sendError(response, 401, "Incorrect username/email or password.");
         return;
       }
+
+      if (user.is_disabled) {
+        sendError(response, 403, "This account has been disabled. Contact an admin if you think this is a mistake.");
+        return;
+      }
+
+      const lastLoginAt = nowIso();
+      db.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").run(lastLoginAt, user.id);
+      trackEvent({
+        eventType: "auth_login",
+        actorUserId: user.id,
+        subjectUserId: user.id,
+        ipAddress: clientIp
+      });
 
       const token = createSession(user.id);
       setSessionCookie(response, token);
@@ -1316,6 +1757,45 @@ async function handleApi(request, response, url) {
 
     if (!viewer) {
       sendError(response, 401, "You need an account for that action.");
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/auth/password") {
+      if (!checkRateLimit(request, "auth-password", 10, 15 * 60 * 1000)) {
+        sendError(response, 429, "Too many password change attempts. Try again later.");
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      const currentPassword = String(body.currentPassword || "");
+      const newPassword = String(body.newPassword || "");
+      const user = getAuthUserById(viewer.id);
+
+      if (!user || !verifyPassword(currentPassword, user)) {
+        sendError(response, 401, "Current password is incorrect.");
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        sendError(response, 400, "New password must be at least 8 characters.");
+        return;
+      }
+
+      const { salt, hash } = hashPassword(newPassword);
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?, password_salt = ?
+        WHERE id = ?
+      `).run(hash, salt, viewer.id);
+
+      trackEvent({
+        eventType: "password_change",
+        actorUserId: viewer.id,
+        subjectUserId: viewer.id,
+        ipAddress: clientIp
+      });
+
+      sendJson(response, 200, { ok: true });
       return;
     }
 
@@ -1354,6 +1834,11 @@ async function handleApi(request, response, url) {
     }
 
     if (method === "POST" && pathname === "/api/comments") {
+      if (!checkRateLimit(request, "comments-create", 18, 60 * 1000)) {
+        sendError(response, 429, "You are posting comments too quickly. Try again in a moment.");
+        return;
+      }
+
       const body = await readJsonBody(request);
       const target = normalizeCommentTarget(body.targetType, body.targetKey);
       const commentBody = sanitizeText(body.body, 1200);
@@ -1374,6 +1859,14 @@ async function handleApi(request, response, url) {
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(viewer.id, target.targetType, target.targetKey, commentBody, createdAt, createdAt);
 
+      trackEvent({
+        eventType: "comment_create",
+        routePage: target.targetType,
+        routeId: target.targetKey,
+        actorUserId: viewer.id,
+        ipAddress: clientIp
+      });
+
       sendJson(response, 201, {
         ok: true,
         thread: getCommentThread(target.targetType, target.targetKey, 20)
@@ -1382,6 +1875,11 @@ async function handleApi(request, response, url) {
     }
 
     if (method === "POST" && pathname === "/api/community/posts") {
+      if (!checkRateLimit(request, "community-posts", 12, 10 * 60 * 1000)) {
+        sendError(response, 429, "You are publishing posts too quickly. Try again later.");
+        return;
+      }
+
       const body = await readJsonBody(request);
       const category = ["build", "combo", "general"].includes(body.category) ? body.category : "general";
       const title = sanitizeText(body.title, 120);
@@ -1402,11 +1900,25 @@ async function handleApi(request, response, url) {
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(viewer.id, category, title, postBody, createdAt, createdAt);
 
+      trackEvent({
+        eventType: "community_post_create",
+        routePage: "community",
+        routeId: category,
+        actorUserId: viewer.id,
+        ipAddress: clientIp,
+        meta: { category }
+      });
+
       sendJson(response, 201, { ok: true });
       return;
     }
 
     if (method === "POST" && pathname === "/api/community/submissions") {
+      if (!checkRateLimit(request, "community-submissions", 12, 30 * 60 * 1000)) {
+        sendError(response, 429, "You are submitting too quickly. Try again later.");
+        return;
+      }
+
       const body = await readJsonBody(request);
       let submission;
       try {
@@ -1444,6 +1956,14 @@ async function handleApi(request, response, url) {
         ok: true,
         submission: getSubmissionById(Number(result.lastInsertRowid))
       });
+      trackEvent({
+        eventType: "submission_create",
+        routePage: "community",
+        routeId: String(result.lastInsertRowid),
+        actorUserId: viewer.id,
+        ipAddress: clientIp,
+        meta: { submissionType: submission.submissionType }
+      });
       return;
     }
 
@@ -1460,7 +1980,28 @@ async function handleApi(request, response, url) {
         WHERE id = ?
       `).run(displayName, avatarUrl, statusText, bio, viewer.id);
 
+      trackEvent({
+        eventType: "profile_update",
+        routePage: "community",
+        routeId: String(viewer.id),
+        actorUserId: viewer.id,
+        subjectUserId: viewer.id,
+        ipAddress: clientIp
+      });
+
       sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/admin/dashboard") {
+      if (!viewer.isAdmin) {
+        sendError(response, 403, "Admin account required.");
+        return;
+      }
+
+      sendJson(response, 200, {
+        dashboard: getAdminDashboardPayload()
+      });
       return;
     }
 
@@ -1494,9 +2035,83 @@ async function handleApi(request, response, url) {
         WHERE id = ?
       `).run(status, reviewNotes, reviewedAt, viewer.id, reviewedAt, submissionId);
 
+      trackEvent({
+        eventType: "submission_review",
+        routePage: "community",
+        routeId: String(submissionId),
+        actorUserId: viewer.id,
+        subjectUserId: submission.author.id,
+        ipAddress: clientIp,
+        meta: { status }
+      });
+
       sendJson(response, 200, {
         ok: true,
         submission: getSubmissionById(submissionId)
+      });
+      return;
+    }
+
+    const adminUserMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
+    if (adminUserMatch && method === "POST") {
+      if (!viewer.isAdmin) {
+        sendError(response, 403, "Admin account required.");
+        return;
+      }
+
+      const targetUserId = Number(adminUserMatch[1]);
+      const targetUser = getUserRowById(targetUserId);
+      if (!targetUser) {
+        sendError(response, 404, "User not found.");
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      const nextRole = ["member", "admin"].includes(body.role) ? body.role : targetUser.role;
+      const nextDisabled = typeof body.isDisabled === "boolean" ? body.isDisabled : Boolean(targetUser.is_disabled);
+      const adminNote = sanitizeText(body.adminNote, 400);
+
+      if (targetUserId === viewer.id && (nextRole !== targetUser.role || nextDisabled !== Boolean(targetUser.is_disabled))) {
+        sendError(response, 400, "Use another admin account before changing your own admin access or suspension state.");
+        return;
+      }
+
+      if (targetUser.role === "admin" && !targetUser.is_disabled && nextRole !== "admin" && countActiveAdmins() <= 1) {
+        sendError(response, 400, "Atlas must keep at least one active admin account.");
+        return;
+      }
+
+      if (targetUser.role === "admin" && !targetUser.is_disabled && nextDisabled && countActiveAdmins() <= 1) {
+        sendError(response, 400, "You cannot suspend the last active admin account.");
+        return;
+      }
+
+      db.prepare(`
+        UPDATE users
+        SET role = ?, is_disabled = ?, admin_note = ?
+        WHERE id = ?
+      `).run(nextRole, nextDisabled ? 1 : 0, adminNote, targetUserId);
+
+      if (nextDisabled) {
+        destroySessionsForUser(targetUserId);
+      }
+
+      trackEvent({
+        eventType: "admin_user_manage",
+        routePage: "community",
+        routeId: String(targetUserId),
+        actorUserId: viewer.id,
+        subjectUserId: targetUserId,
+        ipAddress: clientIp,
+        meta: {
+          role: nextRole,
+          isDisabled: nextDisabled
+        }
+      });
+
+      sendJson(response, 200, {
+        ok: true,
+        user: buildAdminUserRecord(getUserRowById(targetUserId))
       });
       return;
     }
@@ -1591,6 +2206,11 @@ async function handleApi(request, response, url) {
       }
 
       if (method === "POST") {
+        if (!checkRateLimit(request, "community-messages", 30, 10 * 60 * 1000)) {
+          sendError(response, 429, "You are sending messages too quickly. Try again later.");
+          return;
+        }
+
         const body = await readJsonBody(request);
         const messageBody = sanitizeText(body.body, 1000);
         if (messageBody.length < 1) {
@@ -1602,6 +2222,15 @@ async function handleApi(request, response, url) {
           INSERT INTO direct_messages (sender_id, recipient_id, body, created_at)
           VALUES (?, ?, ?, ?)
         `).run(viewer.id, otherUserId, messageBody, nowIso());
+
+        trackEvent({
+          eventType: "direct_message_create",
+          routePage: "community",
+          routeId: String(otherUserId),
+          actorUserId: viewer.id,
+          subjectUserId: otherUserId,
+          ipAddress: clientIp
+        });
 
         sendJson(response, 201, { ok: true });
         return;

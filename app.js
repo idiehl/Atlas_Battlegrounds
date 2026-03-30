@@ -160,6 +160,9 @@ const heroesPageSize = 24;
 
 const state = {
   route: parseHash(),
+  analytics: {
+    lastRouteKey: ""
+  },
   builds: {
     search: "",
     tribe: "all",
@@ -212,6 +215,22 @@ const commentState = {
   pendingSubmitKeys: new Set(),
   pendingDeleteIds: new Set()
 };
+
+function postTelemetry(path, payload) {
+  try {
+    void fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+  } catch {
+    // Telemetry failures should never affect rendering.
+  }
+}
 
 function escapeHtml(value = "") {
   return value
@@ -3229,6 +3248,19 @@ function ensureCommentsForActiveRoute() {
   void loadCommentThreads(targets, { limit });
 }
 
+function trackRouteView() {
+  const routeKey = `${state.route.page}:${state.route.id ?? ""}`;
+  if (state.analytics.lastRouteKey === routeKey) {
+    return;
+  }
+
+  state.analytics.lastRouteKey = routeKey;
+  postTelemetry("/api/analytics/view", {
+    page: state.route.page,
+    routeId: state.route.id == null ? "" : String(state.route.id)
+  });
+}
+
 function render() {
   const previousRoute = state.route;
   const nextRoute = parseHash();
@@ -3245,6 +3277,7 @@ function render() {
   renderAdRails();
   renderFooter();
   ensureCommentsForActiveRoute();
+  trackRouteView();
 
   if (routeChanged) {
     requestAnimationFrame(() => {
