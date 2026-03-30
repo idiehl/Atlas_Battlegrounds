@@ -473,16 +473,16 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
       forum: buildCommunityHash("forum", "new")
     }[section];
     const actionLabel = {
-      builds: "+ Post a Build",
-      combos: "+ Post Combo",
-      forum: "+ Post"
+      builds: "Create a Build",
+      combos: "Create a Combo",
+      forum: "Create a Post"
     }[section];
     const actionTarget = getActiveSession() ? actionHref : buildAccountHash();
-    const heroAside = section === "builds"
+    const heroAside = ["builds", "combos", "forum"].includes(section)
       ? `
         <div class="community-hero-cta">
-          <a class="button-link is-primary" href="${actionTarget}">
-            ${escape(actionLabel)}
+          <a class="button-link is-primary community-hero-button" href="${actionTarget}">
+            ${escape(getActiveSession() ? actionLabel : "Open Account")}
           </a>
         </div>
       `
@@ -517,7 +517,7 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
       `;
 
     return `
-      <section class="page-hero community-page-hero${section === "builds" ? " is-builds-feed" : ""}">
+      <section class="page-hero community-page-hero${["builds", "combos", "forum"].includes(section) ? " is-feed-page" : ""}">
         <div class="page-hero-copy">
           <p class="eyebrow">${escape(content.eyebrow)}</p>
           <h1>${escape(content.title)}</h1>
@@ -1311,17 +1311,7 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
 
   function renderForumSection() {
     return `
-      <section class="page-card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Forum</p>
-            <h2 class="section-title">General Discussion</h2>
-            <p class="filter-helper">Patch reactions, hero thoughts, questions, and broader Battlegrounds discussion live here.</p>
-          </div>
-          <a class="button-link is-primary" href="${getActiveSession() ? buildCommunityHash("forum", "new") : buildAccountHash()}">
-            ${getActiveSession() ? "+ Post" : "Log In"}
-          </a>
-        </div>
+      <section class="page-card community-feed-card">
         ${state.feed.length ? `
           <div class="community-feed-list">
             ${state.feed.map((post) => renderPostCard(post)).join("")}
@@ -1649,10 +1639,9 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
         title: "Community Combo Picks",
         helper: "User-created combo writeups that made it through review.",
         items: state.approvedComboSubmissions,
-        actionHref: getActiveSession() ? buildCommunityHash("combos", "new") : buildAccountHash(),
-        actionLabel: getActiveSession() ? "+ Post Combo" : "Log In",
         emptyTitle: "No Community Combos Yet",
-        emptyBody: "Approved community combos will appear here after review."
+        emptyBody: "Approved community combos will appear here after review.",
+        hideHeader: true
       });
     }
 

@@ -2363,7 +2363,7 @@ img {
   align-items: start;
 }
 
-.community-page-hero.is-builds-feed {
+.community-page-hero.is-feed-page {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
@@ -2386,6 +2386,12 @@ img {
 
 .community-hero-cta .button-link {
   align-self: flex-start;
+}
+
+.community-hero-button {
+  padding: 12px 22px;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .community-feed-card {
@@ -2787,7 +2793,7 @@ img {
     grid-template-columns: 1fr;
   }
 
-  .community-page-hero.is-builds-feed {
+  .community-page-hero.is-feed-page {
     grid-template-columns: 1fr;
   }
 
