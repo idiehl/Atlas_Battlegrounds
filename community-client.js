@@ -473,20 +473,20 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
       forum: buildCommunityHash("forum", "new")
     }[section];
     const actionLabel = {
-      builds: "+ Post Build",
+      builds: "+ Post a Build",
       combos: "+ Post Combo",
       forum: "+ Post"
     }[section];
-
-    return `
-      <section class="page-hero community-page-hero">
-        <div class="page-hero-copy">
-          <p class="eyebrow">${escape(content.eyebrow)}</p>
-          <h1>${escape(content.title)}</h1>
-          <p class="page-hero-lead">${escape(content.lead)}</p>
-          <p class="filter-helper">${escape(content.helper)}</p>
-          ${renderCommunityTabs(section)}
+    const actionTarget = getActiveSession() ? actionHref : buildAccountHash();
+    const heroAside = section === "builds"
+      ? `
+        <div class="community-hero-cta">
+          <a class="button-link is-primary" href="${actionTarget}">
+            ${escape(actionLabel)}
+          </a>
         </div>
+      `
+      : `
         <div class="stat-rail">
           <article class="summary-card">
             <span class="summary-label">Members</span>
@@ -508,12 +508,24 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
               <span class="summary-label">Create</span>
               <strong>${escape(actionLabel)}</strong>
               <p>${getActiveSession() ? "Open the dedicated composer." : "Log in from Account before posting."}</p>
-              <a class="button-link is-primary" href="${getActiveSession() ? actionHref : buildAccountHash()}">
+              <a class="button-link is-primary" href="${actionTarget}">
                 ${escape(getActiveSession() ? actionLabel : "Open Account")}
               </a>
             </article>
           ` : ""}
         </div>
+      `;
+
+    return `
+      <section class="page-hero community-page-hero${section === "builds" ? " is-builds-feed" : ""}">
+        <div class="page-hero-copy">
+          <p class="eyebrow">${escape(content.eyebrow)}</p>
+          <h1>${escape(content.title)}</h1>
+          <p class="page-hero-lead">${escape(content.lead)}</p>
+          <p class="filter-helper">${escape(content.helper)}</p>
+          ${renderCommunityTabs(section)}
+        </div>
+        ${heroAside}
       </section>
     `;
   }
@@ -1172,22 +1184,25 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
     emptyTitle,
     emptyBody,
     actionHref = "",
-    actionLabel = ""
+    actionLabel = "",
+    hideHeader = false
   }) {
     return `
-      <section class="page-card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">${escape(eyebrow)}</p>
-            <h2 class="section-title">${escape(title)}</h2>
-            <p class="filter-helper">${escape(helper)}</p>
+      <section class="page-card${hideHeader ? " community-feed-card" : ""}">
+        ${hideHeader ? "" : `
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">${escape(eyebrow)}</p>
+              <h2 class="section-title">${escape(title)}</h2>
+              <p class="filter-helper">${escape(helper)}</p>
+            </div>
+            ${actionHref ? `
+              <a class="button-link is-primary" href="${actionHref}">
+                ${escape(actionLabel)}
+              </a>
+            ` : ""}
           </div>
-          ${actionHref ? `
-            <a class="button-link is-primary" href="${actionHref}">
-              ${escape(actionLabel)}
-            </a>
-          ` : ""}
-        </div>
+        `}
         ${items.length ? `
           <div class="community-submission-grid">
             ${items.map((submission) => renderSubmissionCard(submission)).join("")}
@@ -1650,10 +1665,9 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
       title: "Community Build Picks",
       helper: "User-created build guides that made it through review and now live on their own page.",
       items: state.approvedBuildSubmissions,
-      actionHref: getActiveSession() ? buildCommunityHash("builds", "new") : buildAccountHash(),
-      actionLabel: getActiveSession() ? "+ Post Build" : "Log In",
       emptyTitle: "No Community Builds Yet",
-      emptyBody: "Approved community builds will appear here after review."
+      emptyBody: "Approved community builds will appear here after review.",
+      hideHeader: true
     });
   }
 
