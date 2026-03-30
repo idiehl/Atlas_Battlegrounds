@@ -70,15 +70,15 @@ const COMBO_BUCKETS = [
 const NAV_PAGES = [
   BUILDS_PAGE,
   COMBOS_PAGE,
-  COMMUNITY_PAGE,
-  ACCOUNT_PAGE,
-  SUPPORT_PAGE,
   ...CATEGORY_PAGES.map((entry) => ({
     key: entry.key,
     label: entry.label,
     kind: entry.detailKind,
     category: entry.category
-  }))
+  })),
+  COMMUNITY_PAGE,
+  ACCOUNT_PAGE,
+  SUPPORT_PAGE
 ];
 
 const PAGE_BY_KEY = new Map(NAV_PAGES.map((entry) => [entry.key, entry]));
