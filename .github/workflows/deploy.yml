@@ -19,6 +19,7 @@ jobs:
       DEPLOY_USER: ${{ vars.ATLAS_DEPLOY_USER }}
       APP_ROOT: /opt/atlas-battlegrounds
       RELEASE_ID: ${{ github.sha }}
+      RELEASE_ARCHIVE: ${{ runner.temp }}/atlas-${{ github.sha }}.tar.gz
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -35,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tar -czf "atlas-${RELEASE_ID}.tar.gz" \
+          tar -czf "${RELEASE_ARCHIVE}" \
             --exclude=.git \
             --exclude=.github \
             -C "${GITHUB_WORKSPACE}" .
@@ -53,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scp "atlas-${RELEASE_ID}.tar.gz" "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/atlas-${RELEASE_ID}.tar.gz"
+          scp "${RELEASE_ARCHIVE}" "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/atlas-${RELEASE_ID}.tar.gz"
 
       - name: Deploy release on droplet
         shell: bash
