@@ -1927,23 +1927,6 @@ function renderSupportView() {
             <a class="button-link" href="${buildHash("builds")}">Back To Builds</a>
           </div>
         </div>
-        <div class="stat-rail">
-          <article class="summary-card">
-            <span class="summary-label">No Paywall</span>
-            <strong>Open Access</strong>
-            <p>Atlas stays public whether someone contributes or not.</p>
-          </article>
-          <article class="summary-card">
-            <span class="summary-label">Primary Focus</span>
-            <strong>Development</strong>
-            <p>Support goes toward upkeep, design, features, and faster iteration.</p>
-          </article>
-          <article class="summary-card">
-            <span class="summary-label">Checkout</span>
-            <strong>${escapeHtml(hasLiveCheckout ? "Ready" : "Config Pending")}</strong>
-            <p>${escapeHtml(hasLiveCheckout ? "At least one live support option is configured." : "Paste Stripe links into support-config.js to turn these buttons on.")}</p>
-          </article>
-        </div>
       </section>
 
       <section class="page-card">

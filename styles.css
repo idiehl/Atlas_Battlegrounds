@@ -2109,6 +2109,7 @@ img {
 }
 
 .support-hero {
+  grid-template-columns: 1fr;
   background:
     radial-gradient(circle at 18% 18%, rgba(255, 211, 126, 0.16), transparent 28%),
     radial-gradient(circle at 82% 24%, rgba(116, 217, 255, 0.12), transparent 30%),
