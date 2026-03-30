@@ -19,7 +19,6 @@ jobs:
       DEPLOY_USER: ${{ vars.ATLAS_DEPLOY_USER }}
       APP_ROOT: /opt/atlas-battlegrounds
       RELEASE_ID: ${{ github.sha }}
-      RELEASE_ARCHIVE: ${{ runner.temp }}/atlas-${{ github.sha }}.tar.gz
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -36,6 +35,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          release_archive="${RUNNER_TEMP}/atlas-${RELEASE_ID}.tar.gz"
+          echo "RELEASE_ARCHIVE=${release_archive}" >> "${GITHUB_ENV}"
           tar -czf "${RELEASE_ARCHIVE}" \
             --exclude=.git \
             --exclude=.github \
