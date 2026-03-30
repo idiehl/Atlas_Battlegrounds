@@ -2351,6 +2351,10 @@ img {
   flex-wrap: wrap;
 }
 
+.community-account-actions {
+  margin-top: 2px;
+}
+
 .community-route-strip {
   margin-top: 6px;
 }
@@ -2365,6 +2369,10 @@ img {
 
 .community-page-hero.is-feed-page {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.community-page-hero.is-account-minimal {
+  grid-template-columns: 1fr;
 }
 
 .community-action-card {

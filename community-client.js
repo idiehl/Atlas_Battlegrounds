@@ -562,7 +562,7 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
     }
 
     return `
-      <section class="page-hero community-page-hero">
+      <section class="page-hero community-page-hero is-account-minimal">
         <div class="page-hero-copy">
           <div class="community-profile-summary">
             ${getAvatarMarkup(profile || session, "community-avatar is-large")}
@@ -574,32 +574,10 @@ window.createAtlasCommunityController = function createAtlasCommunityController(
             </div>
           </div>
           ${renderAccountTabs(section, session)}
-        </div>
-        <div class="stat-rail">
-          <article class="summary-card">
-            <span class="summary-label">Saved Items</span>
-            <strong>${escape(String(getAccountState().savedItems?.length || 0))}</strong>
-            <p>Your current library.</p>
-          </article>
-          <article class="summary-card">
-            <span class="summary-label">Submissions</span>
-            <strong>${escape(String(state.mySubmissions.length || 0))}</strong>
-            <p>Build and combo submissions tied to this account.</p>
-          </article>
-          <article class="summary-card">
-            <span class="summary-label">Access</span>
-            <strong>${session.isAdmin ? "Admin" : "Member"}</strong>
-            <p>${session.isAdmin ? "This account can review submissions and manage users." : "Standard community account access."}</p>
-          </article>
-          <article class="summary-card community-action-card">
-            <span class="summary-label">Public Page</span>
-            <strong>Profile</strong>
-            <p>Open the public version of your profile page.</p>
-            <div class="community-profile-actions">
-              <a class="button-link" href="${buildProfileHash(session.id)}">View Profile</a>
-              <button class="button-link" type="button" data-community-logout="true">Log Out</button>
-            </div>
-          </article>
+          <div class="community-profile-actions community-account-actions">
+            <a class="button-link" href="${buildProfileHash(session.id)}">View Public Profile</a>
+            <button class="button-link" type="button" data-community-logout="true">Log Out</button>
+          </div>
         </div>
       </section>
     `;
