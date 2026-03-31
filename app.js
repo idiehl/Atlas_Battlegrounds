@@ -132,6 +132,19 @@ const typeOptions = catalog.bgCardTypes;
 const minionTypeOptions = catalog.minionTypes ?? [];
 const tierOptions = [...new Set(cards.map((card) => card.tier).filter(Boolean))].sort((left, right) => left - right);
 const allLookupCards = [...cards, ...linkedCardsById.values()];
+
+function categorySupportsTier(category) {
+  return category === "minion" || category === "spell";
+}
+
+function categorySupportsMinionType(category) {
+  return category === "minion";
+}
+
+function getDefaultLibrarySort(category) {
+  return category === "spell" ? "tier_asc" : "name_asc";
+}
+
 const LOOKUP_ALIAS_STOPWORDS = new Set([
   "a",
   "an",
@@ -187,7 +200,7 @@ const state = {
         : {
             search: "",
             mode: "all",
-            sort: "name_asc",
+            sort: getDefaultLibrarySort(entry.category),
             minionType: "all",
             tier: "all",
             page: 1
@@ -358,6 +371,57 @@ function getModeLabel(card) {
 
 function getCardImage(card, fallback = "") {
   return card.image || card.cropImage || fallback;
+}
+
+function getCardFullImage(card, fallback = "") {
+  return card?.image || fallback;
+}
+
+function getCardSlugTail(slug = "") {
+  return String(slug).replace(/^\d+-/, "");
+}
+
+function getLinkedCardThumbnail(card, sourceCard = null) {
+  const directImage = getCardFullImage(card);
+  if (directImage) {
+    return { src: directImage, isCrop: false };
+  }
+
+  if (sourceCard?.name === card?.name) {
+    const sourceImage = getCardFullImage(sourceCard);
+    if (sourceImage) {
+      return { src: sourceImage, isCrop: false };
+    }
+  }
+
+  const slugTail = getCardSlugTail(card?.slug);
+  const slugMatch = slugTail
+    ? cards.find((entry) => getCardFullImage(entry) && getCardSlugTail(entry.slug) === slugTail)
+    : null;
+  if (slugMatch) {
+    return { src: slugMatch.image, isCrop: false };
+  }
+
+  const prioritizedNameMatch = card?.name
+    ? cards.find((entry) => getCardFullImage(entry) && entry.name === card.name && (!sourceCard?.category || entry.category === sourceCard.category))
+    : null;
+  if (prioritizedNameMatch) {
+    return { src: prioritizedNameMatch.image, isCrop: false };
+  }
+
+  const fallbackNameMatch = card?.name
+    ? cards.find((entry) => getCardFullImage(entry) && entry.name === card.name)
+    : null;
+  if (fallbackNameMatch) {
+    return { src: fallbackNameMatch.image, isCrop: false };
+  }
+
+  const cropImage = card?.cropImage || "";
+  if (cropImage) {
+    return { src: cropImage, isCrop: true };
+  }
+
+  return { src: "", isCrop: false };
 }
 
 function getLookupCardKey(card) {
@@ -1328,8 +1392,8 @@ function getVisibleCards(category) {
   return cards
     .filter((card) => card.category === category)
     .filter((card) => !libraryState.search || card.searchText.includes(libraryState.search))
-    .filter((card) => category !== "minion" || libraryState.minionType === "all" || card.minionTypeSlug === libraryState.minionType)
-    .filter((card) => category !== "minion" || libraryState.tier === "all" || String(card.tier) === libraryState.tier)
+    .filter((card) => !categorySupportsMinionType(category) || libraryState.minionType === "all" || card.minionTypeSlug === libraryState.minionType)
+    .filter((card) => !categorySupportsTier(category) || libraryState.tier === "all" || String(card.tier) === libraryState.tier)
     .filter((card) => {
       switch (libraryState.mode) {
         case "shared":
@@ -1373,7 +1437,8 @@ function getCategoryViewContext(category) {
     pageCards,
     selectedCard,
     hiddenByFilter,
-    isMinionPage: category === "minion",
+    hasMinionTypeFilter: categorySupportsMinionType(category),
+    hasTierFilter: categorySupportsTier(category),
     emptyLabel: pageConfig.label.toLowerCase()
   };
 }
@@ -2678,7 +2743,7 @@ function renderHeroTile(hero, selectedId) {
   `;
 }
 
-function renderLinkedCard(label, card) {
+function renderLinkedCard(label, card, sourceCard = null) {
   if (!card) {
     return "";
   }
@@ -2688,10 +2753,16 @@ function renderLinkedCard(label, card) {
   const openTag = targetPage ? "a" : "article";
   const closeTag = targetPage ? "a" : "article";
   const href = targetPage ? ` href="${buildHash(targetPage, card.id)}"` : "";
+  const thumbnail = getLinkedCardThumbnail(card, sourceCard);
+  const fallbackLabel = (card.name || label || "?").trim().charAt(0).toUpperCase() || "?";
 
   return `
     <${openTag} class="linked-card"${href}>
-      <img src="${escapeHtml(getCardImage(card))}" alt="${escapeHtml(card.name)}" loading="lazy">
+      <div class="linked-card-media${thumbnail.isCrop ? " is-crop" : ""}">
+        ${thumbnail.src
+          ? `<img src="${escapeHtml(thumbnail.src)}" alt="${escapeHtml(card.name)}" loading="lazy">`
+          : `<span class="linked-card-media-fallback" aria-hidden="true">${escapeHtml(fallbackLabel)}</span>`}
+      </div>
       <div>
         <span class="detail-label">${escapeHtml(label)}</span>
         <h4>${escapeHtml(card.name)}</h4>
@@ -2758,7 +2829,7 @@ function renderCardDetail(card, hiddenByFilter = false) {
         <div class="detail-section">
           <span class="detail-label">Linked Cards</span>
           <div class="linked-card-grid">
-            ${linked.map((entry) => renderLinkedCard(entry.label, entry.card)).join("")}
+            ${linked.map((entry) => renderLinkedCard(entry.label, entry.card, card)).join("")}
           </div>
         </div>
       ` : ""}
@@ -3002,9 +3073,11 @@ function getCategorySortOptions(category) {
     `;
   }
 
-  const tierOptionsMarkup = category === "minion" ? `
+  const tierOptionsMarkup = categorySupportsTier(category) ? `
       <option value="tier_asc">Tier Low To High</option>
       <option value="tier_desc">Tier High To Low</option>
+    ` : "";
+  const combatOptionsMarkup = category === "minion" ? `
       <option value="attack_desc">Attack High To Low</option>
       <option value="health_desc">Health High To Low</option>
     ` : "";
@@ -3013,6 +3086,7 @@ function getCategorySortOptions(category) {
       <option value="name_asc">Name A-Z</option>
       <option value="name_desc">Name Z-A</option>
       ${tierOptionsMarkup}
+      ${combatOptionsMarkup}
     `;
 }
 
@@ -3040,7 +3114,8 @@ function renderCategoryView() {
     pageCards,
     selectedCard,
     hiddenByFilter,
-    isMinionPage,
+    hasMinionTypeFilter,
+    hasTierFilter,
     emptyLabel
   } = view;
   libraryState.page = page;
@@ -3063,7 +3138,7 @@ function renderCategoryView() {
             <input id="cards-search" type="search" value="${escapeHtml(libraryState.search)}" placeholder="Search ${escapeHtml(pageConfig.label.toLowerCase())}">
           </label>
 
-          ${isMinionPage ? `
+          ${hasMinionTypeFilter ? `
             <label class="filter-field">
               <span class="filter-label">Minion Type</span>
               <select id="cards-minion-type">
@@ -3074,7 +3149,9 @@ function renderCategoryView() {
                 `).join("")}
               </select>
             </label>
+          ` : ""}
 
+          ${hasTierFilter ? `
             <label class="filter-field">
               <span class="filter-label">Tavern Tier</span>
               <select id="cards-tier">
@@ -3350,11 +3427,14 @@ function resetCategoryFilters(category) {
 
   targetState.search = "";
   targetState.mode = "all";
-  targetState.sort = "name_asc";
+  targetState.sort = getDefaultLibrarySort(category);
   targetState.page = 1;
 
-  if (category === "minion") {
+  if (categorySupportsMinionType(category)) {
     targetState.minionType = "all";
+  }
+
+  if (categorySupportsTier(category)) {
     targetState.tier = "all";
   }
 

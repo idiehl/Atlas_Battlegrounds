@@ -791,7 +791,8 @@ img {
 
 .linked-card {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: start;
   gap: 12px;
   padding: 10px;
   border-radius: 16px;
@@ -804,8 +805,43 @@ img {
   border-color: var(--line-strong);
 }
 
-.linked-card img {
-  border-radius: 12px;
+.linked-card-media {
+  width: 72px;
+  aspect-ratio: 0.72;
+  border-radius: 14px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at 50% 16%, rgba(255, 221, 139, 0.14), transparent 32%),
+    rgba(255, 255, 255, 0.035);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
+}
+
+.linked-card-media.is-crop {
+  aspect-ratio: 1.8;
+}
+
+.linked-card-media img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  object-position: center top;
+}
+
+.linked-card-media.is-crop img {
+  object-fit: cover;
+  object-position: center;
+}
+
+.linked-card-media-fallback {
+  color: var(--gold-strong);
+  font-size: 0.9rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .linked-card h4,
@@ -3073,9 +3109,13 @@ img {
     grid-template-columns: 1fr;
   }
 
-  .linked-card img,
+  .linked-card-media,
   .hero-power-card img {
     width: min(180px, 100%);
+  }
+
+  .linked-card-media {
+    justify-self: start;
   }
 
   .combo-piece {
