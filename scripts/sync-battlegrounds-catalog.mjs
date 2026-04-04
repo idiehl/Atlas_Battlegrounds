@@ -21,7 +21,7 @@ const BG_CARD_TYPES = [
 function buildRequest(url) {
   return new Request(url, {
     headers: {
-      "user-agent": "Mozilla/5.0 Codex Hearthstone Catalog Sync"
+      "user-agent": "Mozilla/5.0 Codex Atlas Battlegrounds Catalog Sync"
     }
   });
 }

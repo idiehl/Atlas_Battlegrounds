@@ -56,7 +56,7 @@ sudo chmod 750 /var/lib/atlas-battlegrounds
 Sync this repo into `/opt/atlas-battlegrounds/current`.
 
 ```bash
-sudo rsync -av --delete /path/to/local/Hearthstone/ /opt/atlas-battlegrounds/current/
+sudo rsync -av --delete /path/to/local/Atlas_Battlegrounds/ /opt/atlas-battlegrounds/current/
 sudo chown -R atlasbg:atlasbg /opt/atlas-battlegrounds/current
 ```
 

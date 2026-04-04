@@ -2,49 +2,9 @@ window.BATTLEGROUNDS_BUILDS = {
   "asOf": "2026-03-25T18:10:34-04:00",
   "season": "Battlegrounds Season 12",
   "seasonTheme": "Tavern at the Edge of Time",
-  "rankingBasis": "Curated Season 12 build board anchored to Firestone's live last-patch composition stats and strategy feed, with the original featured ten followed by additional viable archetypes that still have current guide support.",
-  "methodology": [
-    "Verified the active season and Timewarped Tavern system from Blizzard's Season 12 patch notes.",
-    "Verified early post-launch balance context from Blizzard's 34.2.2 Battlegrounds patch notes.",
-    "Verified ongoing live balance context from Blizzard's 34.4.2 and 34.6.2 Battlegrounds patch notes.",
-    "Used Firestone's live Battlegrounds compositions page plus its current last-patch composition stats feed for recent average placements and sample sizes.",
-    "Used Firestone's Battlegrounds strategy feed for current comp names, core packages, difficulty tags, and commit guidance.",
-    "Used Prima Games' Season 12 best teams article as a secondary community cross-check for viable Season 12 archetypes before expanding the guide board."
-  ],
-  "sources": [
-    {
-      "label": "Blizzard 34.2 Battlegrounds Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24244423"
-    },
-    {
-      "label": "Blizzard 34.2.2 Battlegrounds Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24250382"
-    },
-    {
-      "label": "Blizzard 34.4.2 Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24244400"
-    },
-    {
-      "label": "Blizzard 34.6.2 Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24242744"
-    },
-    {
-      "label": "Firestone Battlegrounds Compositions",
-      "url": "https://www.firestoneapp.com/battlegrounds/comps"
-    },
-    {
-      "label": "Firestone Last-Patch Battlegrounds Composition Stats",
-      "url": "https://static.zerotoheroes.com/api/bgs/comp-stats/last-patch/overview-from-hourly.gz.json?v=2"
-    },
-    {
-      "label": "Firestone Battlegrounds Strategy Feed",
-      "url": "https://static.zerotoheroes.com/hearthstone/data/battlegrounds-strategies/bgs-comps-strategies.gz.json"
-    },
-    {
-      "label": "Prima Games Season 12 Battlegrounds Best Teams",
-      "url": "https://primagames.com/tips/hearthstone-battlegrounds-season-12-best-teams"
-    }
-  ],
+  "rankingBasis": "",
+  "methodology": [],
+  "sources": [],
   "builds": [
     {
       "rank": 1,

@@ -2,35 +2,9 @@
   "asOf": "2026-03-21",
   "season": "Battlegrounds Season 12",
   "seasonTheme": "Tavern at the Edge of Time",
-  "rankingBasis": "Highest-ranked current Firestone composition for each main tribe, ordered by current live page placement.",
-  "methodology": [
-    "Verified the active season and Timewarped Tavern system from Blizzard's Season 12 patch notes.",
-    "Verified post-launch balance context from Blizzard's 34.4.2 and 34.6.2 Battlegrounds patch notes.",
-    "Used Firestone's live Battlegrounds compositions page for current comp rankings, usage counts, and expert play notes.",
-    "Used Prima Games' Season 12 tier list as a secondary launch-week community cross-check for tribe archetypes."
-  ],
-  "sources": [
-    {
-      "label": "Blizzard 34.2 Battlegrounds Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24244423"
-    },
-    {
-      "label": "Blizzard 34.4.2 Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24244400"
-    },
-    {
-      "label": "Blizzard 34.6.2 Patch Notes",
-      "url": "https://hearthstone.blizzard.com/en-us/news/24242744"
-    },
-    {
-      "label": "Firestone Battlegrounds Compositions",
-      "url": "https://www.firestoneapp.com/battlegrounds/comps"
-    },
-    {
-      "label": "Prima Games Season 12 Battlegrounds Tier List",
-      "url": "https://primagames.com/tips/hearthstone-battlegrounds-season-12-tier-list"
-    }
-  ],
+  "rankingBasis": "",
+  "methodology": [],
+  "sources": [],
   "builds": [
     {
       "rank": 1,

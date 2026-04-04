@@ -6,10 +6,13 @@ const buildTierPlanCatalog = window.BATTLEGROUNDS_BUILD_TIER_PLANS ?? {};
 const adConfig = window.ATLAS_AD_CONFIG ?? {
   enabled: false,
   desktopMinWidth: 1680,
-  hiddenRoutes: ["community", "support"],
+  hiddenRoutes: ["community", "support", "privacy"],
   adClient: "",
   leftSlot: { adSlot: "", fallback: null },
-  rightSlot: { adSlot: "", fallback: null }
+  rightSlot: { adSlot: "", fallback: null },
+  inlineTopSlot: { adSlot: "", fallback: null },
+  inlineBottomSlot: { adSlot: "", fallback: null },
+  inlineMidSlot: { adSlot: "", fallback: null }
 };
 const supportConfig = window.ATLAS_SUPPORT_CONFIG ?? {
   title: "Support Atlas",
@@ -49,6 +52,7 @@ const COMBOS_PAGE = { key: "combos", label: "Combos", kind: "combos" };
 const COMMUNITY_PAGE = { key: "community", label: "Community", kind: "community" };
 const ACCOUNT_PAGE = { key: "account", label: "Account", kind: "account" };
 const SUPPORT_PAGE = { key: "support", label: "Support", kind: "support" };
+const PRIVACY_PAGE = { key: "privacy", label: "Privacy", kind: "privacy" };
 const COMBO_BUCKETS = [
   {
     key: "core",
@@ -81,7 +85,8 @@ const NAV_PAGES = [
   SUPPORT_PAGE
 ];
 
-const PAGE_BY_KEY = new Map(NAV_PAGES.map((entry) => [entry.key, entry]));
+const ROUTE_PAGES = [...NAV_PAGES, PRIVACY_PAGE];
+const PAGE_BY_KEY = new Map(ROUTE_PAGES.map((entry) => [entry.key, entry]));
 const PAGE_BY_CATEGORY = new Map(CATEGORY_PAGES.map((entry) => [entry.category, entry]));
 const LEGACY_PAGE_ALIASES = new Map([
   ["overview", "builds"],
@@ -94,6 +99,9 @@ const LEGACY_PAGE_ALIASES = new Map([
   ["donate", "support"],
   ["donation", "support"],
   ["contribute", "support"],
+  ["privacy-policy", "privacy"],
+  ["legal", "privacy"],
+  ["cookies", "privacy"],
   ["strategy", "builds"],
   ["strategies", "builds"],
   ["cards", "minions"],
@@ -215,8 +223,10 @@ const refs = {
   combosView: document.getElementById("combos-view"),
   communityView: document.getElementById("community-view"),
   supportView: document.getElementById("support-view"),
+  privacyView: document.getElementById("privacy-view"),
   libraryView: document.getElementById("library-view"),
   heroesView: document.getElementById("heroes-view"),
+  commentDrawer: document.getElementById("comment-drawer-root"),
   adRailLeft: document.getElementById("ad-rail-left"),
   adRailRight: document.getElementById("ad-rail-right"),
   footer: document.getElementById("app-footer")
@@ -231,8 +241,16 @@ const commentState = {
   errors: new Map(),
   expandedKeys: new Set(),
   pendingSubmitKeys: new Set(),
-  pendingDeleteIds: new Set()
+  pendingDeleteIds: new Set(),
+  pendingPinIds: new Set(),
+  drawer: null
 };
+const COMMENT_SORT_OPTIONS = [
+  { value: "top", label: "Top" },
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" }
+];
+const DEFAULT_COMMENT_SORT = COMMENT_SORT_OPTIONS[0].value;
 
 function postTelemetry(path, payload) {
   try {
@@ -935,6 +953,21 @@ function getSavedItemGroupLabel(itemType) {
   }[itemType] ?? "Saved";
 }
 
+function getCommentTargetTypeLabel(itemType) {
+  return {
+    build: "Build",
+    combo: "Combo",
+    hero: "Hero",
+    minion: "Minion",
+    quest: "Quest",
+    reward: "Reward",
+    anomaly: "Anomaly",
+    spell: "Spell",
+    trinket: "Trinket",
+    timewarp: "Timewarp"
+  }[itemType] ?? "Item";
+}
+
 function getAccountSnapshot() {
   return accountController?.getState() ?? {
     ready: false,
@@ -948,6 +981,26 @@ function getAccountSnapshot() {
 
 function buildCommentThreadKey(targetType, targetKey) {
   return `${String(targetType || "").trim().toLowerCase()}:${String(targetKey || "").trim().toLowerCase()}`;
+}
+
+function normalizeCommentSort(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return COMMENT_SORT_OPTIONS.some((option) => option.value === normalized)
+    ? normalized
+    : DEFAULT_COMMENT_SORT;
+}
+
+function getCommentCountLabel(count = 0) {
+  const normalizedCount = Number(count) || 0;
+  return `${normalizedCount} comment${normalizedCount === 1 ? "" : "s"}`;
+}
+
+function getExpandedCommentLoadLimit(totalComments = 0) {
+  return Math.min(Math.max(Number(totalComments) || 0, 20), 40);
+}
+
+function getCommentMutationLimit(thread) {
+  return Math.max(Number(thread?.loadedLimit) || 0, 20);
 }
 
 function normalizeCommentTarget(targetType, targetKey) {
@@ -964,12 +1017,22 @@ function normalizeCommentTarget(targetType, targetKey) {
   };
 }
 
+function isSameCommentTarget(left, right) {
+  return Boolean(
+    left &&
+    right &&
+    left.targetType === right.targetType &&
+    left.targetKey === right.targetKey
+  );
+}
+
 function getCommentThreadState(targetType, targetKey) {
   const normalizedTarget = normalizeCommentTarget(targetType, targetKey);
   if (!normalizedTarget) {
     return {
       targetType: "",
       targetKey: "",
+      sort: DEFAULT_COMMENT_SORT,
       totalComments: 0,
       loadedLimit: 0,
       comments: [],
@@ -983,6 +1046,7 @@ function getCommentThreadState(targetType, targetKey) {
   return {
     targetType: normalizedTarget.targetType,
     targetKey: normalizedTarget.targetKey,
+    sort: normalizeCommentSort(thread?.sort),
     totalComments: thread?.totalComments ?? 0,
     loadedLimit: thread?.loadedLimit ?? 0,
     comments: thread?.comments ?? [],
@@ -1017,6 +1081,7 @@ function storeCommentThread(thread) {
   commentState.threads.set(threadKey, {
     targetType: normalizedTarget.targetType,
     targetKey: normalizedTarget.targetKey,
+    sort: normalizeCommentSort(thread?.sort),
     totalComments: Number(thread.totalComments) || 0,
     loadedLimit: Number(thread.loadedLimit) || (Array.isArray(thread.comments) ? thread.comments.length : 0),
     comments: Array.isArray(thread.comments) ? thread.comments : []
@@ -1024,10 +1089,11 @@ function storeCommentThread(thread) {
   commentState.errors.delete(threadKey);
 }
 
-async function loadCommentThreads(targets, { limit = 12, force = false } = {}) {
+async function loadCommentThreads(targets, { limit = 12, force = false, sort = DEFAULT_COMMENT_SORT } = {}) {
   const normalizedTargets = targets
     .map((target) => normalizeCommentTarget(target.targetType, target.targetKey))
     .filter(Boolean);
+  const normalizedSort = normalizeCommentSort(sort);
 
   if (!normalizedTargets.length) {
     return;
@@ -1036,7 +1102,10 @@ async function loadCommentThreads(targets, { limit = 12, force = false } = {}) {
   const requestTargets = normalizedTargets.filter((target) => {
     const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
     const existing = commentState.threads.get(threadKey);
-    const needsLoad = force || !existing || (existing.loadedLimit ?? 0) < limit;
+    const needsLoad = force
+      || !existing
+      || normalizeCommentSort(existing.sort) !== normalizedSort
+      || (existing.loadedLimit ?? 0) < limit;
     return needsLoad && !commentState.loadingKeys.has(threadKey);
   });
 
@@ -1057,6 +1126,7 @@ async function loadCommentThreads(targets, { limit = 12, force = false } = {}) {
       params.append("target", `${target.targetType}:${target.targetKey}`);
     });
     params.set("limit", String(limit));
+    params.set("sort", normalizedSort);
 
     const payload = await commentsApi(`/api/comments/bootstrap?${params.toString()}`);
     (payload.threads ?? []).forEach((thread) => storeCommentThread(thread));
@@ -1097,29 +1167,52 @@ function renderCommentEntry(comment, targetType, targetKey) {
   const accountState = getAccountSnapshot();
   const canDelete = Boolean(accountState.session && (accountState.session.isAdmin || accountState.session.id === comment.author.id));
   const deletePending = commentState.pendingDeleteIds.has(comment.id);
+  const canPin = Boolean(accountState.session?.isAdmin);
+  const pinPending = commentState.pendingPinIds.has(comment.id);
+  const disableActions = deletePending || pinPending;
 
   return `
-    <article class="comment-card">
+    <article class="comment-card${comment.isPinned ? " is-pinned" : ""}">
       <div class="comment-header">
         <div class="comment-author">
           ${getCommentAvatarMarkup(comment.author)}
           <div class="comment-meta">
-            <strong>${escapeHtml(comment.author.displayName || comment.author.username)}</strong>
+            <div class="comment-meta-line">
+              <strong>${escapeHtml(comment.author.displayName || comment.author.username)}</strong>
+              ${comment.isPinned ? `<span class="comment-badge">Pinned</span>` : ""}
+            </div>
             <span>@${escapeHtml(comment.author.username)}</span>
             <span>${escapeHtml(formatSyncDate(comment.createdAt))}</span>
           </div>
         </div>
-        ${canDelete ? `
+        ${canPin || canDelete ? `
+          <div class="comment-header-actions">
+            ${canPin ? `
+              <button
+                type="button"
+                class="pill-button comment-action"
+                data-comment-pin="${comment.id}"
+                data-comment-pinned="${comment.isPinned ? "true" : "false"}"
+                data-comment-type="${escapeHtml(targetType)}"
+                data-comment-key="${escapeHtml(targetKey)}"
+                ${disableActions ? "disabled" : ""}
+              >
+                ${pinPending ? (comment.isPinned ? "Unpinning..." : "Pinning...") : (comment.isPinned ? "Unpin" : "Pin")}
+              </button>
+            ` : ""}
+            ${canDelete ? `
           <button
             type="button"
-            class="pill-button"
+            class="pill-button comment-action"
             data-comment-delete="${comment.id}"
             data-comment-type="${escapeHtml(targetType)}"
             data-comment-key="${escapeHtml(targetKey)}"
-            ${deletePending ? "disabled" : ""}
+            ${disableActions ? "disabled" : ""}
           >
             ${deletePending ? "Removing…" : "Delete"}
           </button>
+            ` : ""}
+          </div>
         ` : ""}
       </div>
       <p class="comment-body">${escapeHtml(comment.body)}</p>
@@ -1167,6 +1260,68 @@ function renderCommentComposer(targetType, targetKey, { compact = false } = {}) 
   `;
 }
 
+function renderCommentSortControls(targetType, targetKey) {
+  const thread = getCommentThreadState(targetType, targetKey);
+  if (thread.totalComments < 2) {
+    return "";
+  }
+
+  return `
+    <div class="comment-sort-row">
+      <span class="detail-label">Sort</span>
+      <div class="comment-sort-buttons" role="group" aria-label="Sort comments">
+        ${COMMENT_SORT_OPTIONS.map((option) => `
+          <button
+            type="button"
+            class="pill-button comment-sort-button${thread.sort === option.value ? " is-active" : ""}"
+            data-comment-sort="${option.value}"
+            data-comment-type="${escapeHtml(targetType)}"
+            data-comment-key="${escapeHtml(targetKey)}"
+          >
+            ${option.label}
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderCommentThreadBody({
+  targetType,
+  targetKey,
+  compact = false,
+  emptyMessage = "No one has commented on this item yet."
+}) {
+  const normalizedTarget = normalizeCommentTarget(targetType, targetKey);
+  if (!normalizedTarget) {
+    return "";
+  }
+
+  const thread = getCommentThreadState(normalizedTarget.targetType, normalizedTarget.targetKey);
+  const hasComments = thread.comments.length > 0;
+
+  return `
+    <div class="comment-thread-body-shell${compact ? " is-compact" : ""}">
+      ${thread.loading && !hasComments ? `<p class="comment-helper">Loading comments…</p>` : ""}
+      ${thread.error ? `<p class="comment-error">${escapeHtml(thread.error)}</p>` : ""}
+      ${renderCommentSortControls(normalizedTarget.targetType, normalizedTarget.targetKey)}
+      ${hasComments ? `
+        <div class="comment-list">
+          ${thread.comments.map((comment) => renderCommentEntry(comment, normalizedTarget.targetType, normalizedTarget.targetKey)).join("")}
+        </div>
+      ` : (!thread.loading ? `
+        <div class="comment-empty">
+          <p class="comment-helper">${escapeHtml(emptyMessage)}</p>
+        </div>
+      ` : "")}
+      ${hasComments && thread.totalComments > thread.comments.length ? `
+        <p class="comment-helper">Showing ${thread.comments.length} of ${thread.totalComments} comments.</p>
+      ` : ""}
+      ${renderCommentComposer(normalizedTarget.targetType, normalizedTarget.targetKey, { compact })}
+    </div>
+  `;
+}
+
 function renderCommentSection({
   targetType,
   targetKey,
@@ -1183,8 +1338,7 @@ function renderCommentSection({
   const threadKey = buildCommentThreadKey(normalizedTarget.targetType, normalizedTarget.targetKey);
   const thread = getCommentThreadState(normalizedTarget.targetType, normalizedTarget.targetKey);
   const expanded = !collapsible || commentState.expandedKeys.has(threadKey);
-  const hasComments = thread.comments.length > 0;
-  const countLabel = `${thread.totalComments} comment${thread.totalComments === 1 ? "" : "s"}`;
+  const countLabel = getCommentCountLabel(thread.totalComments);
 
   return `
     <div class="item-comments${compact ? " is-compact" : ""}">
@@ -1214,23 +1368,153 @@ function renderCommentSection({
       </div>
       ${expanded ? `
         <div class="comment-thread-body">
-          ${thread.loading && !hasComments ? `<p class="comment-helper">Loading comments…</p>` : ""}
-          ${thread.error ? `<p class="comment-error">${escapeHtml(thread.error)}</p>` : ""}
-          ${hasComments ? `
-            <div class="comment-list">
-              ${thread.comments.map((comment) => renderCommentEntry(comment, normalizedTarget.targetType, normalizedTarget.targetKey)).join("")}
-            </div>
-          ` : (!thread.loading ? `
-            <div class="comment-empty">
-              <p class="comment-helper">No one has commented on this item yet.</p>
-            </div>
-          ` : "")}
-          ${hasComments && thread.totalComments > thread.comments.length ? `
-            <p class="comment-helper">Showing ${thread.comments.length} of ${thread.totalComments} comments.</p>
-          ` : ""}
-          ${renderCommentComposer(normalizedTarget.targetType, normalizedTarget.targetKey, { compact })}
+          ${renderCommentThreadBody({
+            targetType: normalizedTarget.targetType,
+            targetKey: normalizedTarget.targetKey,
+            compact
+          })}
         </div>
       ` : ""}
+    </div>
+  `;
+}
+
+function renderCommentLauncher({
+  targetType,
+  targetKey,
+  title,
+  contextLabel = "",
+  detailHref = "",
+  className = ""
+}) {
+  const normalizedTarget = normalizeCommentTarget(targetType, targetKey);
+  if (!normalizedTarget) {
+    return "";
+  }
+
+  const thread = getCommentThreadState(normalizedTarget.targetType, normalizedTarget.targetKey);
+  const isOpen = isSameCommentTarget(commentState.drawer, normalizedTarget);
+  const classes = ["pill-button", "comment-launcher", className, isOpen ? "is-active" : ""].filter(Boolean).join(" ");
+
+  return `
+    <button
+      type="button"
+      class="${classes}"
+      data-comment-open="true"
+      data-comment-type="${escapeHtml(normalizedTarget.targetType)}"
+      data-comment-key="${escapeHtml(normalizedTarget.targetKey)}"
+      data-comment-title="${escapeHtml(title || "")}"
+      data-comment-label="${escapeHtml(contextLabel || `${getCommentTargetTypeLabel(normalizedTarget.targetType)} Comments`)}"
+      data-comment-detail="${escapeHtml(detailHref)}"
+      aria-haspopup="dialog"
+      aria-expanded="${isOpen ? "true" : "false"}"
+    >
+      Comment (${thread.totalComments})
+    </button>
+  `;
+}
+
+function openCommentDrawer({ targetType, targetKey, title = "", contextLabel = "", detailHref = "" }) {
+  const target = normalizeCommentTarget(targetType, targetKey);
+  if (!target) {
+    return;
+  }
+
+  commentState.drawer = {
+    targetType: target.targetType,
+    targetKey: target.targetKey,
+    title: String(title || "").trim(),
+    contextLabel: String(contextLabel || "").trim(),
+    detailHref: String(detailHref || "").trim()
+  };
+
+  const thread = getCommentThreadState(target.targetType, target.targetKey);
+  const limit = getExpandedCommentLoadLimit(thread.totalComments);
+  render();
+
+  void loadCommentThreads([target], {
+    limit,
+    force: thread.loadedLimit < limit,
+    sort: thread.sort
+  });
+
+  requestAnimationFrame(() => {
+    const textarea = document.querySelector(".comment-drawer textarea");
+    if (textarea instanceof HTMLElement) {
+      textarea.focus();
+      return;
+    }
+
+    const closeButton = document.querySelector("[data-comment-close]");
+    if (closeButton instanceof HTMLElement) {
+      closeButton.focus();
+    }
+  });
+}
+
+function closeCommentDrawer() {
+  if (!commentState.drawer) {
+    return;
+  }
+
+  commentState.drawer = null;
+  render();
+}
+
+function renderCommentDrawer() {
+  if (!refs.commentDrawer) {
+    return;
+  }
+
+  const drawer = commentState.drawer;
+  document.body.classList.toggle("has-comment-drawer", Boolean(drawer));
+
+  if (!drawer) {
+    refs.commentDrawer.innerHTML = "";
+    return;
+  }
+
+  const thread = getCommentThreadState(drawer.targetType, drawer.targetKey);
+  const title = drawer.title || "Conversation";
+  const label = drawer.contextLabel || `${getCommentTargetTypeLabel(drawer.targetType)} Comments`;
+  const helper = thread.totalComments
+    ? getCommentCountLabel(thread.totalComments)
+    : (thread.loading ? "Loading comments…" : "No comments yet.");
+
+  refs.commentDrawer.innerHTML = `
+    <div class="comment-drawer" data-comment-drawer="true">
+      <button
+        type="button"
+        class="comment-drawer-backdrop"
+        data-comment-close="true"
+        aria-label="Close comments for ${escapeHtml(title)}"
+      ></button>
+      <section
+        class="comment-drawer-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="comment-drawer-title"
+      >
+        <header class="comment-drawer-head">
+          <div class="comment-drawer-copy">
+            <span class="detail-label">${escapeHtml(label)}</span>
+            <h3 id="comment-drawer-title">${escapeHtml(title)}</h3>
+            <p class="comment-helper">${escapeHtml(helper)}</p>
+          </div>
+          <div class="comment-drawer-actions">
+            ${drawer.detailHref ? `<a class="pill-button" href="${escapeHtml(drawer.detailHref)}">Open Details</a>` : ""}
+            <button type="button" class="pill-button" data-comment-close="true">Close</button>
+          </div>
+        </header>
+        <div class="comment-drawer-body">
+          ${renderCommentThreadBody({
+            targetType: drawer.targetType,
+            targetKey: drawer.targetKey,
+            compact: true,
+            emptyMessage: "Be the first to leave a note on this item."
+          })}
+        </div>
+      </section>
     </div>
   `;
 }
@@ -1590,13 +1874,15 @@ function renderBuildBestInSlotThumb(entry) {
 
 function renderBuildTile(build) {
   const tierClass = `build-list-item--${String(build.rating).toLowerCase()}`;
+  const detailHref = buildHash("builds", build.rank);
 
   return `
-    <a
+    <article
       class="build-list-item ${escapeHtml(tierClass)}"
-      href="${buildHash("builds", build.rank)}"
+      data-build-link="${detailHref}"
       aria-label="Open ${escapeHtml(build.buildName)} guide"
       role="row"
+      tabindex="0"
     >
       <span class="build-row-logo" aria-hidden="true" role="cell">
         ${renderBuildLogoMark(build)}
@@ -1612,19 +1898,29 @@ function renderBuildTile(build) {
         <span class="detail-label">Tier</span>
         <strong>${escapeHtml(build.rating)} Tier</strong>
       </span>
-      <span class="build-row-stat" role="cell">
+      <span class="build-row-stat build-row-stat-difficulty" role="cell">
         <span class="detail-label">Difficulty</span>
         <strong>${escapeHtml(build.difficulty)}</strong>
       </span>
-      <span class="build-row-stat" role="cell">
+      <span class="build-row-stat build-row-stat-average" role="cell">
         <span class="detail-label">Avg Place</span>
         <strong>${build.averagePlacement.toFixed(2)}</strong>
       </span>
-      <span class="build-row-stat" role="cell">
+      <span class="build-row-stat build-row-stat-sample" role="cell">
         <span class="detail-label">Sample</span>
         <strong>${build.games.toLocaleString("en-US")}</strong>
       </span>
-    </a>
+      <div class="build-row-actions" role="cell">
+        ${renderCommentLauncher({
+          targetType: "build",
+          targetKey: String(build.rank),
+          title: build.buildName,
+          contextLabel: "Build Comments",
+          detailHref,
+          className: "build-comment-button"
+        })}
+      </div>
+    </article>
   `;
 }
 
@@ -1683,8 +1979,14 @@ function renderReferenceSection({
   methodology = [],
   sources = []
 }) {
+  const normalizedEyebrow = String(eyebrow || "").trim().toLowerCase();
+  const normalizedTitle = String(title || "").trim().toLowerCase();
   const hasMethodology = Array.isArray(methodology) && methodology.length > 0;
   const hasSources = Array.isArray(sources) && sources.length > 0;
+
+  if (normalizedEyebrow === "board notes" || normalizedTitle === "why these builds are on the board") {
+    return "";
+  }
 
   if (!basisText && !hasMethodology && !hasSources) {
     return "";
@@ -1784,14 +2086,19 @@ function renderComboRow(combo) {
       </div>
 
       <div class="combo-row-comments" role="cell">
-        ${renderCommentSection({
-          targetType: "combo",
-          targetKey: combo.key,
-          title: "Combo Comments",
-          helper: "",
-          compact: true,
-          collapsible: true
-        })}
+        <div class="combo-row-comment-bar">
+          <div class="comment-thread-copy">
+            <span class="detail-label">Discussion</span>
+            <p class="comment-helper">Open the thread to read matchup notes, corrections, and pivot reports.</p>
+          </div>
+          ${renderCommentLauncher({
+            targetType: "combo",
+            targetKey: combo.key,
+            title: combo.title,
+            contextLabel: "Combo Comments",
+            className: "combo-comment-button"
+          })}
+        </div>
       </div>
     </article>
   `;
@@ -2064,16 +2371,138 @@ function renderSupportView() {
   `;
 }
 
+function getHiddenAdRoutes() {
+  return new Set((adConfig.hiddenRoutes ?? []).map((value) => String(value || "").trim().toLowerCase()));
+}
+
+function isAdRouteHidden() {
+  return getHiddenAdRoutes().has(state.route.page);
+}
+
+function renderPrivacyView() {
+  refs.privacyView.classList.toggle("is-active", state.route.page === "privacy");
+
+  if (state.route.page !== "privacy") {
+    refs.privacyView.innerHTML = "";
+    return;
+  }
+
+  const contactEmail = String(supportConfig.contactEmail || "").trim();
+
+  refs.privacyView.innerHTML = `
+    <div class="page-stack">
+      <section class="page-hero support-hero legal-hero">
+        <div class="page-hero-copy">
+          <p class="eyebrow">Privacy</p>
+          <h1>Privacy, Ads, And Support</h1>
+          <p class="page-hero-lead">Atlas Battlegrounds uses a small set of cookies and third-party providers so the site can run, optional accounts and community tools can work, and monetization can be enabled without turning the product into a paywall.</p>
+          <p class="filter-helper">Last updated April 3, 2026. Update this page whenever Atlas changes its providers, account flows, analytics, or ad setup.</p>
+          <div class="hero-actions">
+            <a class="button-link" href="${buildHash("support")}">Open Support</a>
+            <a class="button-link" href="${buildHash("builds")}">Back To Builds</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">What Atlas Collects</p>
+            <h2 class="section-title">Core Site Data</h2>
+            <p class="filter-helper">The site currently stores only the information needed to power accounts, community features, moderation, and basic route analytics.</p>
+          </div>
+        </div>
+        <div class="support-use-grid">
+          <article class="support-info-card">
+            <h3>Accounts</h3>
+            <p>If you create an account, Atlas stores the username, email address, profile fields you submit, and a hashed password record so sign-in can work. Session cookies are used to keep you signed in.</p>
+          </article>
+          <article class="support-info-card">
+            <h3>Community Content</h3>
+            <p>If you post comments, submissions, profile updates, likes, buddy connections, or direct messages, Atlas stores that content so it can be shown back to you, other users, and moderators.</p>
+          </article>
+          <article class="support-info-card">
+            <h3>Usage Analytics</h3>
+            <p>Atlas records route-view and product activity events, along with the request IP address on the server side, so the site owner can understand traffic, moderation activity, and feature usage.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Third Parties</p>
+            <h2 class="section-title">Ads And Payments</h2>
+            <p class="filter-helper">The current codebase is prepared for Google AdSense display ads and Stripe Payment Links, but those providers should only be enabled after their live IDs, policies, and disclosures are in place.</p>
+          </div>
+        </div>
+        <div class="support-note-grid">
+          <article class="support-info-card">
+            <h3>Advertising</h3>
+            <p>When advertising is enabled, Atlas may load Google AdSense to show display ads and measure ad performance. Google may use cookies or similar technologies, subject to your message, disclosure, and consent setup.</p>
+          </article>
+          <article class="support-info-card">
+            <h3>Donations</h3>
+            <p>Optional support checkouts open through Stripe Payment Links. Atlas should not collect or store full payment card numbers directly because checkout is handed off to Stripe.</p>
+          </article>
+          <article class="support-info-card">
+            <h3>External Links</h3>
+            <p>Links to Blizzard data sources, payment providers, or future sponsors leave Atlas and are governed by those third parties once you open them.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Your Choices</p>
+            <h2 class="section-title">How To Reach Atlas</h2>
+            <p class="filter-helper">Use a contact address before enabling live ads or donations so people have a clear way to ask privacy or billing questions.</p>
+          </div>
+        </div>
+        <div class="support-use-grid">
+          <article class="support-info-card">
+            <h3>Optional Account Use</h3>
+            <ul class="guide-bullet-list legal-bullet-list">
+              <li>You can browse the build and card library without creating an account.</li>
+              <li>You can avoid optional support checkouts by not using the Support page buttons.</li>
+              <li>You can sign out to clear the active Atlas session cookie from the browser.</li>
+            </ul>
+          </article>
+          <article class="support-info-card">
+            <h3>Requests And Questions</h3>
+            <ul class="guide-bullet-list legal-bullet-list">
+              <li>Use the contact address below for account, moderation, privacy, or donation questions.</li>
+              <li>Review this page again if Atlas adds a CMP, affiliate links, sponsorships, or new analytics tooling.</li>
+              <li>If ads are enabled, keep this page linked in the footer and keep <code>ads.txt</code> live at the site root.</li>
+            </ul>
+          </article>
+        </div>
+        <div class="support-disclaimer legal-disclaimer">
+          <p>This page is the site-level disclosure for Atlas Battlegrounds as currently implemented. It should be refined after AdSense and Stripe are live, especially if traffic expands outside the United States.</p>
+          ${contactEmail
+            ? `<p>Privacy contact: <a href="mailto:${escapeHtml(contactEmail)}">${escapeHtml(contactEmail)}</a></p>`
+            : `<p>Add a real contact email in <code>support-config.js</code> before launching monetization so visitors have a clear contact path.</p>`}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function shouldShowAdRails() {
   const minWidth = Number(adConfig.desktopMinWidth) || 1680;
-  const hiddenRoutes = new Set((adConfig.hiddenRoutes ?? []).map((value) => String(value || "").trim().toLowerCase()));
   return Boolean(
     refs.adRailLeft &&
     refs.adRailRight &&
     adConfig.enabled &&
     window.innerWidth >= minWidth &&
-    !hiddenRoutes.has(state.route.page)
+    !isAdRouteHidden()
   );
+}
+
+function shouldShowInlineAds() {
+  const minWidth = Number(adConfig.desktopMinWidth) || 1680;
+  return Boolean(adConfig.enabled && window.innerWidth < minWidth && !isAdRouteHidden());
 }
 
 function getAdSlotState(slotConfig) {
@@ -2089,7 +2518,7 @@ function getAdSlotState(slotConfig) {
   };
 }
 
-function renderAdFallbackCard(fallback) {
+function renderAdFallbackCard(fallback, { surface = "rail" } = {}) {
   if (!fallback) {
     return "";
   }
@@ -2100,7 +2529,7 @@ function renderAdFallbackCard(fallback) {
   const hrefMarkup = href ? ` href="${escapeHtml(href)}"` : "";
 
   return `
-    <${openTag} class="ad-slot-card is-house"${hrefMarkup}>
+    <${openTag} class="ad-slot-card is-house is-${escapeHtml(surface)}"${hrefMarkup}>
       <span class="detail-label">${escapeHtml(fallback.label || "Atlas")}</span>
       <h3>${escapeHtml(fallback.title || "Atlas House Ad")}</h3>
       <p>${escapeHtml(fallback.body || "Use this rail for sponsors or internal promotion.")}</p>
@@ -2109,26 +2538,30 @@ function renderAdFallbackCard(fallback) {
   `;
 }
 
-function renderAdRailSlot(slotConfig, position) {
+function renderAdSurfaceSlot(slotConfig, position, { surface = "rail" } = {}) {
   const slotState = getAdSlotState(slotConfig);
 
   if (slotState.isAdsenseReady) {
     return `
-      <div class="ad-slot-card is-adsense">
+      <div class="ad-slot-card is-adsense is-${escapeHtml(surface)}">
         <span class="ad-slot-label">Advertisement</span>
         <ins
-          class="adsbygoogle atlas-adsense-slot"
+          class="adsbygoogle atlas-adsense-slot atlas-adsense-slot--${escapeHtml(surface)}"
           data-atlas-slot="${escapeHtml(position)}"
           data-ad-client="${escapeHtml(slotState.adClient)}"
           data-ad-slot="${escapeHtml(slotState.adSlot)}"
           data-ad-format="auto"
-          data-full-width-responsive="false"
+          data-full-width-responsive="${surface === "inline" ? "true" : "false"}"
         ></ins>
       </div>
     `;
   }
 
-  return renderAdFallbackCard(slotState.fallback);
+  return renderAdFallbackCard(slotState.fallback, { surface });
+}
+
+function renderAdRailSlot(slotConfig, position) {
+  return renderAdSurfaceSlot(slotConfig, position, { surface: "rail" });
 }
 
 function ensureAdsenseScriptLoaded(clientId) {
@@ -2156,13 +2589,13 @@ function ensureAdsenseScriptLoaded(clientId) {
   return adsenseScriptPromise;
 }
 
-function hydrateAdRails() {
-  if (!shouldShowAdRails()) {
+function hydrateAdsenseSlots() {
+  const clientId = String(adConfig.adClient || "").trim();
+  if (!clientId) {
     return;
   }
 
-  const clientId = String(adConfig.adClient || "").trim();
-  if (!clientId) {
+  if (!document.querySelector(".atlas-adsense-slot:not([data-atlas-init])")) {
     return;
   }
 
@@ -2176,6 +2609,93 @@ function hydrateAdRails() {
       }
     });
   });
+}
+
+function getInlineAdMount() {
+  if (state.route.page === "builds") {
+    return refs.buildsView;
+  }
+
+  if (state.route.page === "combos") {
+    return refs.combosView;
+  }
+
+  if (state.route.page === "heroes") {
+    return refs.heroesView;
+  }
+
+  if (getCategoryPage(state.route.page)) {
+    return refs.libraryView;
+  }
+
+  return null;
+}
+
+function clearInlineAdPlacements() {
+  document.querySelectorAll(".atlas-inline-ad-placement").forEach((node) => node.remove());
+}
+
+function getStackContentSections(stack) {
+  return [...stack.children].filter((node) => (
+    node.nodeType === Node.ELEMENT_NODE &&
+    !node.classList.contains("atlas-inline-ad-placement")
+  ));
+}
+
+function renderInlineAdPlacement(slotConfig, position) {
+  const slotMarkup = renderAdSurfaceSlot(slotConfig, position, { surface: "inline" });
+  if (!slotMarkup) {
+    return "";
+  }
+
+  return `
+    <section class="atlas-inline-ad-placement atlas-inline-ad-placement--${escapeHtml(position)}" aria-label="Advertisement">
+      ${slotMarkup}
+    </section>
+  `;
+}
+
+function renderInlineAds() {
+  clearInlineAdPlacements();
+
+  if (!shouldShowInlineAds()) {
+    return;
+  }
+
+  const mount = getInlineAdMount();
+  const stack = mount?.querySelector(".page-stack");
+  if (!stack) {
+    return;
+  }
+
+  const sections = getStackContentSections(stack);
+  if (sections.length === 0) {
+    return;
+  }
+
+  const topMarkup = renderInlineAdPlacement(adConfig.inlineTopSlot, "inline-top");
+  if (topMarkup) {
+    sections[0].insertAdjacentHTML("afterend", topMarkup);
+  }
+
+  const comboSections = [...stack.querySelectorAll(".combo-section")];
+  if (state.route.page === "combos" && comboSections.length > 1) {
+    const midMarkup = renderInlineAdPlacement(adConfig.inlineMidSlot, "inline-mid");
+    const midTarget = comboSections[Math.max(0, Math.ceil(comboSections.length / 2) - 1)];
+    if (midMarkup && midTarget) {
+      midTarget.insertAdjacentHTML("afterend", midMarkup);
+    }
+  }
+
+  const refreshedSections = getStackContentSections(stack);
+  if (refreshedSections.length < 3) {
+    return;
+  }
+
+  const bottomMarkup = renderInlineAdPlacement(adConfig.inlineBottomSlot, "inline-bottom");
+  if (bottomMarkup) {
+    refreshedSections.at(-1).insertAdjacentHTML("beforebegin", bottomMarkup);
+  }
 }
 
 function renderAdRails() {
@@ -2195,7 +2715,12 @@ function renderAdRails() {
 
   refs.adRailLeft.innerHTML = renderAdRailSlot(adConfig.leftSlot, "left");
   refs.adRailRight.innerHTML = renderAdRailSlot(adConfig.rightSlot, "right");
-  hydrateAdRails();
+}
+
+function renderAdPlacements() {
+  renderAdRails();
+  renderInlineAds();
+  hydrateAdsenseSlots();
 }
 
 function renderMissingCardPills(values, label = "Unlinked Names") {
@@ -2706,21 +3231,30 @@ function renderCardTile(card, selectedId) {
   const active = selectedId === card.id ? " is-active" : "";
   const summary = truncateText(card.plainText || CATEGORY_NOTES[card.category], 118);
   const targetPage = getPageForCategory(card.category);
+  const detailHref = buildHash(targetPage, card.id);
 
   return `
-    <a class="card-tile${active}" href="${buildHash(targetPage, card.id)}">
-      <div class="card-tile-image">
-        <img src="${escapeHtml(getCardImage(card))}" alt="${escapeHtml(card.name)}" loading="lazy">
-      </div>
-      <div class="library-card-copy">
-        <div class="pill-row">${renderPillRow(getCardSummaryPills(card).slice(0, 3), true)}</div>
-        <h4>${escapeHtml(card.name)}</h4>
-        <p>${escapeHtml(summary)}</p>
-        <div class="pill-row">
-          <span class="pill is-muted">${active ? "Selected" : "View Details"}</span>
+    <article class="card-tile${active}">
+      <a class="card-tile-link" href="${detailHref}">
+        <div class="card-tile-image">
+          <img src="${escapeHtml(getCardImage(card))}" alt="${escapeHtml(card.name)}" loading="lazy">
         </div>
+        <div class="library-card-copy">
+          <div class="pill-row">${renderPillRow(getCardSummaryPills(card).slice(0, 3), true)}</div>
+          <h4>${escapeHtml(card.name)}</h4>
+          <p>${escapeHtml(summary)}</p>
+        </div>
+      </a>
+      <div class="card-tile-actions">
+        ${renderCommentLauncher({
+          targetType: card.category,
+          targetKey: String(card.id),
+          title: card.name,
+          contextLabel: `${getCommentTargetTypeLabel(card.category)} Comments`,
+          detailHref
+        })}
       </div>
-    </a>
+    </article>
   `;
 }
 
@@ -2728,18 +3262,30 @@ function renderHeroTile(hero, selectedId) {
   const active = selectedId === hero.id ? " is-active" : "";
   const power = getLinkedCard(hero.heroPowerId);
   const note = power?.plainText || "Open the hero detail panel for hero power and companion links.";
+  const detailHref = buildHash(getPageForCategory(hero.category), hero.id);
 
   return `
-    <a class="hero-tile${active}" href="${buildHash(getPageForCategory(hero.category), hero.id)}">
-      <div class="hero-tile-media">
-        <img src="${escapeHtml(getCardImage(hero))}" alt="${escapeHtml(hero.name)}" loading="lazy">
+    <article class="hero-tile${active}">
+      <a class="hero-tile-link" href="${detailHref}">
+        <div class="hero-tile-media">
+          <img src="${escapeHtml(getCardImage(hero))}" alt="${escapeHtml(hero.name)}" loading="lazy">
+        </div>
+        <div class="hero-tile-copy">
+          <div class="pill-row">${renderPillRow([hero.armor != null ? `${hero.armor} Armor` : null, getModeLabel(hero)], true)}</div>
+          <h4>${escapeHtml(hero.name)}</h4>
+          <p>${escapeHtml(truncateText(note, 88))}</p>
+        </div>
+      </a>
+      <div class="hero-tile-actions">
+        ${renderCommentLauncher({
+          targetType: "hero",
+          targetKey: String(hero.id),
+          title: hero.name,
+          contextLabel: "Hero Comments",
+          detailHref
+        })}
       </div>
-      <div class="hero-tile-copy">
-        <div class="pill-row">${renderPillRow([hero.armor != null ? `${hero.armor} Armor` : null, getModeLabel(hero)], true)}</div>
-        <h4>${escapeHtml(hero.name)}</h4>
-        <p>${escapeHtml(truncateText(note, 88))}</p>
-      </div>
-    </a>
+    </article>
   `;
 }
 
@@ -3040,6 +3586,7 @@ function renderBuildsView() {
                   <span class="build-table-col build-table-col-stat" role="columnheader">Difficulty</span>
                   <span class="build-table-col build-table-col-stat" role="columnheader">Avg Place</span>
                   <span class="build-table-col build-table-col-stat" role="columnheader">Games Sampled</span>
+                  <span class="build-table-col build-table-col-stat" role="columnheader">Comments</span>
                 </div>
               </div>
               <div class="build-table-body" role="rowgroup">
@@ -3050,15 +3597,6 @@ function renderBuildsView() {
         </section>
       `}
 
-      ${renderReferenceSection({
-        eyebrow: "Board Notes",
-        title: "Why These Builds Are On The Board",
-        summary: "The ranked list is curated, but the underlying board is still anchored to live comp performance, current strategy writeups, and a deliberately wider set of supported archetypes than the featured top tier alone.",
-        basisLabel: "Ranking Basis",
-        basisText: buildsCatalog.rankingBasis,
-        methodology: buildsCatalog.methodology,
-        sources: buildsCatalog.sources
-      })}
     </div>
   `;
 }
@@ -3301,11 +3839,16 @@ function renderHeroesView() {
 function renderFooter() {
   refs.footer.innerHTML = `
     <p>
-      Live catalog synced ${escapeHtml(formatSyncDate(catalog.syncedAt))}.
+      <a href="${buildHash("support")}">Support Atlas</a>
+      <span class="separator">•</span>
+      <a href="${buildHash("privacy")}">Privacy</a>
       <span class="separator">•</span>
       <a href="${escapeHtml(catalog.source.page)}" target="_blank" rel="noreferrer">Blizzard Battlegrounds Library</a>
       <span class="separator">•</span>
       <a href="${escapeHtml(catalog.source.api)}?gameMode=battlegrounds&page=1&pageSize=1" target="_blank" rel="noreferrer">Blizzard Cards API</a>
+    </p>
+    <p>
+      Live catalog synced ${escapeHtml(formatSyncDate(catalog.syncedAt))}.
     </p>
     <p>
       Totals in this local build:
@@ -3314,41 +3857,95 @@ function renderFooter() {
   `;
 }
 
-function getActiveCommentTargets() {
+function getRouteCommentTargets() {
   if (state.route.page === "combos") {
-    return combos.map((combo) => ({
-      targetType: "combo",
-      targetKey: combo.key
-    }));
+    return {
+      previewTargets: combos.map((combo) => ({
+        targetType: "combo",
+        targetKey: combo.key
+      })),
+      detailTargets: []
+    };
   }
 
-  if (state.route.page === "builds" && state.route.id != null) {
-    const build = buildsByRank.get(state.route.id);
-    return build ? [{ targetType: "build", targetKey: String(build.rank) }] : [];
+  if (state.route.page === "builds") {
+    if (state.route.id != null) {
+      const build = buildsByRank.get(state.route.id);
+      return {
+        previewTargets: [],
+        detailTargets: build ? [{ targetType: "build", targetKey: String(build.rank) }] : []
+      };
+    }
+
+    const visibleBuilds = getVisibleBuilds().slice().sort((left, right) => left.rank - right.rank);
+    return {
+      previewTargets: visibleBuilds.map((build) => ({
+        targetType: "build",
+        targetKey: String(build.rank)
+      })),
+      detailTargets: []
+    };
   }
 
   if (state.route.page === "heroes") {
     const view = getHeroesViewContext();
-    return view.selectedHero ? [{ targetType: "hero", targetKey: String(view.selectedHero.id) }] : [];
+    return {
+      previewTargets: view.pageHeroes.map((hero) => ({
+        targetType: "hero",
+        targetKey: String(hero.id)
+      })),
+      detailTargets: view.selectedHero ? [{ targetType: "hero", targetKey: String(view.selectedHero.id) }] : []
+    };
   }
 
   const categoryPage = getCategoryPage();
   if (categoryPage && categoryPage.category !== "hero") {
     const view = getCategoryViewContext(categoryPage.category);
-    return view?.selectedCard ? [{ targetType: view.selectedCard.category, targetKey: String(view.selectedCard.id) }] : [];
+    return {
+      previewTargets: view?.pageCards?.map((card) => ({
+        targetType: card.category,
+        targetKey: String(card.id)
+      })) ?? [],
+      detailTargets: view?.selectedCard ? [{
+        targetType: view.selectedCard.category,
+        targetKey: String(view.selectedCard.id)
+      }] : []
+    };
   }
 
-  return [];
+  return {
+    previewTargets: [],
+    detailTargets: []
+  };
 }
 
 function ensureCommentsForActiveRoute() {
-  const targets = getActiveCommentTargets();
-  if (!targets.length) {
-    return;
+  const { previewTargets, detailTargets } = getRouteCommentTargets();
+
+  const missingPreviewTargets = previewTargets.filter((target) => {
+    const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+    return !commentState.threads.has(threadKey) && !commentState.loadingKeys.has(threadKey);
+  });
+
+  if (missingPreviewTargets.length) {
+    void loadCommentThreads(missingPreviewTargets, {
+      limit: 1,
+      sort: DEFAULT_COMMENT_SORT
+    });
   }
 
-  const limit = state.route.page === "combos" ? 2 : 20;
-  void loadCommentThreads(targets, { limit });
+  detailTargets.forEach((target) => {
+    const thread = getCommentThreadState(target.targetType, target.targetKey);
+    if (thread.loading || thread.loadedLimit >= 20) {
+      return;
+    }
+
+    void loadCommentThreads([target], {
+      limit: 20,
+      force: thread.loadedLimit < 20,
+      sort: thread.sort
+    });
+  });
 }
 
 function trackRouteView() {
@@ -3392,15 +3989,20 @@ function render() {
   const routeChanged = previousRoute.page !== nextRoute.page || previousRoute.id !== nextRoute.id;
 
   state.route = nextRoute;
+  if (routeChanged) {
+    commentState.drawer = null;
+  }
   renderNav();
   renderBuildsView();
   renderCombosView();
   renderCommunityView();
   renderSupportView();
+  renderPrivacyView();
   renderCategoryView();
   renderHeroesView();
-  renderAdRails();
+  renderAdPlacements();
   renderFooter();
+  renderCommentDrawer();
   ensureCommentsForActiveRoute();
   trackRouteView();
 
@@ -3476,10 +4078,93 @@ function handleClick(event) {
 
     commentState.expandedKeys.add(threadKey);
     const thread = getCommentThreadState(target.targetType, target.targetKey);
+    const limit = getExpandedCommentLoadLimit(thread.totalComments);
     render();
     void loadCommentThreads([target], {
-      limit: Math.max(20, thread.totalComments || 20),
-      force: thread.loadedLimit < Math.max(20, thread.totalComments || 20)
+      limit,
+      force: thread.loadedLimit < limit,
+      sort: thread.sort
+    });
+    return;
+  }
+
+  const commentSortButton = event.target.closest("[data-comment-sort]");
+  if (commentSortButton) {
+    event.preventDefault();
+
+    const target = normalizeCommentTarget(commentSortButton.dataset.commentType, commentSortButton.dataset.commentKey);
+    if (!target) {
+      return;
+    }
+
+    const thread = getCommentThreadState(target.targetType, target.targetKey);
+    const sort = normalizeCommentSort(commentSortButton.dataset.commentSort);
+    const limit = Math.max(getExpandedCommentLoadLimit(thread.totalComments), thread.loadedLimit);
+
+    if (thread.loading || (thread.sort === sort && thread.loadedLimit >= limit)) {
+      return;
+    }
+
+    void loadCommentThreads([target], {
+      limit,
+      force: true,
+      sort
+    });
+    return;
+  }
+
+  const commentOpenButton = event.target.closest("[data-comment-open]");
+  if (commentOpenButton) {
+    event.preventDefault();
+    openCommentDrawer({
+      targetType: commentOpenButton.dataset.commentType,
+      targetKey: commentOpenButton.dataset.commentKey,
+      title: commentOpenButton.dataset.commentTitle,
+      contextLabel: commentOpenButton.dataset.commentLabel,
+      detailHref: commentOpenButton.dataset.commentDetail
+    });
+    return;
+  }
+
+  const commentCloseButton = event.target.closest("[data-comment-close]");
+  if (commentCloseButton) {
+    event.preventDefault();
+    closeCommentDrawer();
+    return;
+  }
+
+  const pinCommentButton = event.target.closest("[data-comment-pin]");
+  if (pinCommentButton) {
+    event.preventDefault();
+    const commentId = Number(pinCommentButton.dataset.commentPin);
+    const target = normalizeCommentTarget(pinCommentButton.dataset.commentType, pinCommentButton.dataset.commentKey);
+
+    if (!commentId || !target || commentState.pendingPinIds.has(commentId)) {
+      return;
+    }
+
+    const thread = getCommentThreadState(target.targetType, target.targetKey);
+    const nextPinned = pinCommentButton.dataset.commentPinned !== "true";
+    commentState.pendingPinIds.add(commentId);
+    render();
+
+    void commentsApi(`/api/comments/${commentId}/pin`, {
+      method: "POST",
+      body: {
+        pinned: nextPinned,
+        limit: getCommentMutationLimit(thread),
+        sort: thread.sort
+      }
+    }).then((payload) => {
+      if (payload.thread) {
+        storeCommentThread(payload.thread);
+      }
+    }).catch((error) => {
+      const threadKey = buildCommentThreadKey(target.targetType, target.targetKey);
+      commentState.errors.set(threadKey, error instanceof Error ? error.message : "Failed to update comment pin.");
+    }).finally(() => {
+      commentState.pendingPinIds.delete(commentId);
+      render();
     });
     return;
   }
@@ -3490,14 +4175,21 @@ function handleClick(event) {
     const commentId = Number(deleteCommentButton.dataset.commentDelete);
     const target = normalizeCommentTarget(deleteCommentButton.dataset.commentType, deleteCommentButton.dataset.commentKey);
 
-    if (!commentId || !target) {
+    if (!commentId || !target || commentState.pendingDeleteIds.has(commentId)) {
       return;
     }
 
+    const thread = getCommentThreadState(target.targetType, target.targetKey);
     commentState.pendingDeleteIds.add(commentId);
     render();
 
-    void commentsApi(`/api/comments/${commentId}`, { method: "DELETE" })
+    void commentsApi(`/api/comments/${commentId}`, {
+      method: "DELETE",
+      body: {
+        limit: getCommentMutationLimit(thread),
+        sort: thread.sort
+      }
+    })
       .then((payload) => {
         if (payload.thread) {
           storeCommentThread(payload.thread);
@@ -3515,6 +4207,16 @@ function handleClick(event) {
   }
 
   if (communityController?.handleClick(event)) {
+    return;
+  }
+
+  const buildLink = event.target.closest("[data-build-link]");
+  if (buildLink) {
+    event.preventDefault();
+    const href = buildLink.dataset.buildLink;
+    if (href) {
+      location.hash = href;
+    }
     return;
   }
 
@@ -3574,6 +4276,7 @@ function handleSubmit(event) {
       return;
     }
     const values = Object.fromEntries(new FormData(commentForm).entries());
+    const thread = getCommentThreadState(target.targetType, target.targetKey);
     commentState.pendingSubmitKeys.add(threadKey);
     commentState.expandedKeys.add(threadKey);
     commentState.errors.delete(threadKey);
@@ -3583,7 +4286,9 @@ function handleSubmit(event) {
       body: {
         targetType: target.targetType,
         targetKey: target.targetKey,
-        body: values.body
+        body: values.body,
+        limit: getCommentMutationLimit(thread),
+        sort: thread.sort
       }
     }).then((payload) => {
       if (payload.thread) {
@@ -3601,6 +4306,27 @@ function handleSubmit(event) {
 
   if (communityController?.handleSubmit(event)) {
     return;
+  }
+}
+
+function handleKeyDown(event) {
+  if (event.key === "Escape" && commentState.drawer) {
+    event.preventDefault();
+    closeCommentDrawer();
+    return;
+  }
+
+  const buildLink = event.target.closest("[data-build-link]");
+  if (!buildLink || event.target !== buildLink) {
+    return;
+  }
+
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    const href = buildLink.dataset.buildLink;
+    if (href) {
+      location.hash = href;
+    }
   }
 }
 
@@ -3730,6 +4456,7 @@ if (accountController) {
 window.addEventListener("hashchange", render);
 window.addEventListener("resize", handleResize);
 document.addEventListener("click", handleClick);
+document.addEventListener("keydown", handleKeyDown);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
 document.addEventListener("submit", handleSubmit);

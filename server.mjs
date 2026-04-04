@@ -110,6 +110,9 @@ db.exec(`
     target_type TEXT NOT NULL,
     target_key TEXT NOT NULL,
     body TEXT NOT NULL,
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    pinned_at TEXT DEFAULT NULL,
+    pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -170,12 +173,25 @@ const SAVABLE_ITEM_TYPES = new Set([
 ]);
 const SUBMISSION_TYPES = new Set(["build", "combo"]);
 const SUBMISSION_STATUSES = new Set(["pending", "approved", "rejected"]);
+const COMMENT_SORTS = new Set(["top", "newest", "oldest"]);
+const COMMENT_GLOBAL_LIMIT = { limit: 30, windowMs: 60 * 60 * 1000 };
+const COMMENT_TARGET_LIMIT = { limit: 4, windowMs: 10 * 60 * 1000 };
+const COMMENT_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
+const COMMENT_PROFANITY_PATTERNS = [
+  /\bfuck(?:er|ers|ing|ed|s)?\b/,
+  /\bshit(?:ty|ting|s)?\b/,
+  /\bbitch(?:es|y)?\b/,
+  /\basshole(?:s)?\b/,
+  /\bdick(?:head|heads|s)?\b/,
+  /\bcunt(?:s)?\b/
+];
 const VIEWABLE_PAGES = new Set([
   "builds",
   "combos",
   "community",
   "account",
   "support",
+  "privacy",
   "heroes",
   "minions",
   "quests",
@@ -189,6 +205,7 @@ const rateLimitState = new Map();
 
 ensureUserRoleColumn();
 ensureUserModerationColumns();
+ensureCommentModerationColumns();
 cleanupExpiredSessions();
 seedDatabase();
 ensureAdminAccount();
@@ -353,6 +370,103 @@ function parseCommentTarget(value = "") {
   return normalizeCommentTarget(rawType, rawKeyParts.join(":"));
 }
 
+function normalizeCommentSort(value = "") {
+  const normalized = sanitizeText(value, 16).toLowerCase();
+  return COMMENT_SORTS.has(normalized) ? normalized : "top";
+}
+
+function normalizeCommentThreadLimit(value, fallback = 20) {
+  const requested = Number(value);
+  const limit = Number.isFinite(requested) && requested > 0
+    ? Math.floor(requested)
+    : fallback;
+  return Math.min(Math.max(limit, 1), 40);
+}
+
+function getRecentIso(windowMs) {
+  return new Date(Date.now() - windowMs).toISOString();
+}
+
+function normalizeModerationText(value = "") {
+  const replacementTable = {
+    "@": "a",
+    "4": "a",
+    "!": "i",
+    "1": "i",
+    "3": "e",
+    "5": "s",
+    "$": "s",
+    "7": "t",
+    "0": "o"
+  };
+
+  return String(value || "")
+    .toLowerCase()
+    .split("")
+    .map((character) => replacementTable[character] ?? character)
+    .join("")
+    .replace(/[^a-z]+/g, " ")
+    .trim();
+}
+
+function hasBlockedCommentLanguage(value = "") {
+  const normalized = normalizeModerationText(value);
+  return COMMENT_PROFANITY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function getCommentCreateBlocker({ userId, targetType, targetKey, body }) {
+  if (hasBlockedCommentLanguage(body)) {
+    return {
+      status: 400,
+      message: "That comment tripped the profanity filter. Edit the wording and try again."
+    };
+  }
+
+  const duplicateRow = db.prepare(`
+    SELECT 1
+    FROM item_comments
+    WHERE
+      user_id = ?
+      AND target_type = ?
+      AND target_key = ?
+      AND lower(body) = lower(?)
+      AND created_at >= ?
+    LIMIT 1
+  `).get(userId, targetType, targetKey, body, getRecentIso(COMMENT_DUPLICATE_WINDOW_MS));
+  if (duplicateRow) {
+    return {
+      status: 409,
+      message: "That looks like a duplicate comment. Edit it or wait a bit before reposting."
+    };
+  }
+
+  const targetCount = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM item_comments
+    WHERE user_id = ? AND target_type = ? AND target_key = ? AND created_at >= ?
+  `).get(userId, targetType, targetKey, getRecentIso(COMMENT_TARGET_LIMIT.windowMs)).count;
+  if (targetCount >= COMMENT_TARGET_LIMIT.limit) {
+    return {
+      status: 429,
+      message: `Slow down a bit. You can leave up to ${COMMENT_TARGET_LIMIT.limit} comments on the same item every 10 minutes.`
+    };
+  }
+
+  const globalCount = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM item_comments
+    WHERE user_id = ? AND created_at >= ?
+  `).get(userId, getRecentIso(COMMENT_GLOBAL_LIMIT.windowMs)).count;
+  if (globalCount >= COMMENT_GLOBAL_LIMIT.limit) {
+    return {
+      status: 429,
+      message: "You are commenting too quickly across the site. Try again a little later."
+    };
+  }
+
+  return null;
+}
+
 function normalizeSubmissionType(value = "") {
   const normalized = sanitizeText(value, 32).toLowerCase();
   return SUBMISSION_TYPES.has(normalized) ? normalized : "";
@@ -489,6 +603,36 @@ function ensureUserModerationColumns() {
       is_disabled = COALESCE(is_disabled, 0),
       admin_note = COALESCE(admin_note, '')
   `).run();
+}
+
+function ensureCommentModerationColumns() {
+  try {
+    db.exec("ALTER TABLE item_comments ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;");
+  } catch {
+    // Column already exists on upgraded databases.
+  }
+
+  try {
+    db.exec("ALTER TABLE item_comments ADD COLUMN pinned_at TEXT DEFAULT NULL;");
+  } catch {
+    // Column already exists on upgraded databases.
+  }
+
+  try {
+    db.exec("ALTER TABLE item_comments ADD COLUMN pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL;");
+  } catch {
+    // Column already exists on upgraded databases.
+  }
+
+  db.prepare(`
+    UPDATE item_comments
+    SET is_pinned = COALESCE(is_pinned, 0)
+  `).run();
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_item_comments_target_pinned
+      ON item_comments (target_type, target_key, is_pinned DESC, pinned_at DESC, created_at DESC);
+  `);
 }
 
 function getAdminBootstrapConfig() {
@@ -1029,6 +1173,9 @@ function buildCommentRecord(row) {
     targetType: row.target_type,
     targetKey: row.target_key,
     body: row.body,
+    isPinned: Boolean(row.is_pinned),
+    pinnedAt: row.pinned_at,
+    pinnedBy: row.pinned_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     author: {
@@ -1056,7 +1203,13 @@ function getCommentById(commentId) {
   return row ? buildCommentRecord(row) : null;
 }
 
-function listCommentsForTarget(targetType, targetKey, limit = 20) {
+function listCommentsForTarget(targetType, targetKey, limit = 20, sort = "top") {
+  const normalizedSort = normalizeCommentSort(sort);
+  const orderBySql = normalizedSort === "oldest"
+    ? "c.created_at ASC, c.id ASC"
+    : normalizedSort === "newest"
+      ? "c.created_at DESC, c.id DESC"
+      : "c.is_pinned DESC, c.pinned_at DESC, c.created_at DESC, c.id DESC";
   const rows = db.prepare(`
     SELECT
       c.*,
@@ -1067,18 +1220,21 @@ function listCommentsForTarget(targetType, targetKey, limit = 20) {
     FROM item_comments c
     JOIN users author ON author.id = c.user_id
     WHERE c.target_type = ? AND c.target_key = ?
-    ORDER BY c.created_at DESC, c.id DESC
+    ORDER BY ${orderBySql}
     LIMIT ?
   `).all(targetType, targetKey, limit);
 
-  return rows.reverse().map(buildCommentRecord);
+  return rows.map(buildCommentRecord);
 }
 
-function getCommentThread(targetType, targetKey, limit = 20) {
+function getCommentThread(targetType, targetKey, limit = 20, sort = "top") {
   const target = normalizeCommentTarget(targetType, targetKey);
   if (!target) {
     return null;
   }
+
+  const normalizedSort = normalizeCommentSort(sort);
+  const normalizedLimit = normalizeCommentThreadLimit(limit, 20);
 
   const totalComments = db.prepare(`
     SELECT COUNT(*) AS count
@@ -1089,13 +1245,14 @@ function getCommentThread(targetType, targetKey, limit = 20) {
   return {
     targetType: target.targetType,
     targetKey: target.targetKey,
+    sort: normalizedSort,
     totalComments,
-    loadedLimit: limit,
-    comments: listCommentsForTarget(target.targetType, target.targetKey, limit)
+    loadedLimit: normalizedLimit,
+    comments: listCommentsForTarget(target.targetType, target.targetKey, normalizedLimit, normalizedSort)
   };
 }
 
-function listCommentThreads(targets, limit = 20) {
+function listCommentThreads(targets, limit = 20, sort = "top") {
   const normalizedTargets = targets
     .map((target) => normalizeCommentTarget(target.targetType, target.targetKey))
     .filter(Boolean);
@@ -1110,7 +1267,7 @@ function listCommentThreads(targets, limit = 20) {
       seen.add(key);
       return true;
     })
-    .map((target) => getCommentThread(target.targetType, target.targetKey, limit))
+    .map((target) => getCommentThread(target.targetType, target.targetKey, limit, sort))
     .filter(Boolean);
 }
 
@@ -1614,11 +1771,11 @@ async function handleApi(request, response, url) {
       const requestedTargets = url.searchParams.getAll("target")
         .map((value) => parseCommentTarget(value))
         .filter(Boolean);
-      const requestedLimit = Number(url.searchParams.get("limit")) || 12;
-      const limit = Math.min(Math.max(requestedLimit, 1), 40);
+      const limit = normalizeCommentThreadLimit(url.searchParams.get("limit"), 12);
+      const sort = normalizeCommentSort(url.searchParams.get("sort"));
 
       sendJson(response, 200, {
-        threads: listCommentThreads(requestedTargets, limit)
+        threads: listCommentThreads(requestedTargets, limit, sort)
       });
       return;
     }
@@ -1846,6 +2003,8 @@ async function handleApi(request, response, url) {
       const body = await readJsonBody(request);
       const target = normalizeCommentTarget(body.targetType, body.targetKey);
       const commentBody = sanitizeText(body.body, 1200);
+      const limit = normalizeCommentThreadLimit(body.limit, 20);
+      const sort = normalizeCommentSort(body.sort);
 
       if (!target) {
         sendError(response, 400, "Comment target is invalid.");
@@ -1854,6 +2013,17 @@ async function handleApi(request, response, url) {
 
       if (commentBody.length < 3) {
         sendError(response, 400, "Comment must be at least 3 characters.");
+        return;
+      }
+
+      const blocker = getCommentCreateBlocker({
+        userId: viewer.id,
+        targetType: target.targetType,
+        targetKey: target.targetKey,
+        body: commentBody
+      });
+      if (blocker) {
+        sendError(response, blocker.status, blocker.message);
         return;
       }
 
@@ -1873,7 +2043,7 @@ async function handleApi(request, response, url) {
 
       sendJson(response, 201, {
         ok: true,
-        thread: getCommentThread(target.targetType, target.targetKey, 20)
+        thread: getCommentThread(target.targetType, target.targetKey, limit, sort)
       });
       return;
     }
@@ -2140,10 +2310,63 @@ async function handleApi(request, response, url) {
       return;
     }
 
+    const commentPinMatch = pathname.match(/^\/api\/comments\/(\d+)\/pin$/);
+    if (commentPinMatch && method === "POST") {
+      if (!viewer.isAdmin) {
+        sendError(response, 403, "Only admins can pin comments.");
+        return;
+      }
+
+      const commentId = Number(commentPinMatch[1]);
+      const comment = getCommentById(commentId);
+      if (!comment) {
+        sendError(response, 404, "Comment not found.");
+        return;
+      }
+
+      const body = await readJsonBody(request);
+      const pinned = Boolean(body.pinned);
+      const limit = normalizeCommentThreadLimit(body.limit, 20);
+      const sort = normalizeCommentSort(body.sort);
+      const updatedAt = nowIso();
+
+      if (pinned) {
+        db.prepare(`
+          UPDATE item_comments
+          SET is_pinned = 1, pinned_at = ?, pinned_by = ?, updated_at = ?
+          WHERE id = ?
+        `).run(updatedAt, viewer.id, updatedAt, commentId);
+      } else {
+        db.prepare(`
+          UPDATE item_comments
+          SET is_pinned = 0, pinned_at = NULL, pinned_by = NULL, updated_at = ?
+          WHERE id = ?
+        `).run(updatedAt, commentId);
+      }
+
+      trackEvent({
+        eventType: pinned ? "comment_pin" : "comment_unpin",
+        routePage: comment.targetType,
+        routeId: comment.targetKey,
+        actorUserId: viewer.id,
+        subjectUserId: comment.author.id,
+        ipAddress: clientIp
+      });
+
+      sendJson(response, 200, {
+        ok: true,
+        thread: getCommentThread(comment.targetType, comment.targetKey, limit, sort)
+      });
+      return;
+    }
+
     const commentMatch = pathname.match(/^\/api\/comments\/(\d+)$/);
     if (commentMatch && method === "DELETE") {
       const commentId = Number(commentMatch[1]);
       const comment = getCommentById(commentId);
+      const body = await readJsonBody(request);
+      const limit = normalizeCommentThreadLimit(body.limit, 20);
+      const sort = normalizeCommentSort(body.sort);
 
       if (!comment) {
         sendError(response, 404, "Comment not found.");
@@ -2158,7 +2381,7 @@ async function handleApi(request, response, url) {
       db.prepare("DELETE FROM item_comments WHERE id = ?").run(commentId);
       sendJson(response, 200, {
         ok: true,
-        thread: getCommentThread(comment.targetType, comment.targetKey, 20)
+        thread: getCommentThread(comment.targetType, comment.targetKey, limit, sort)
       });
       return;
     }
@@ -2257,21 +2480,29 @@ async function serveStatic(response, pathname) {
 
   try {
     const fileStat = await stat(resolvedPath);
-    const finalPath = fileStat.isDirectory() ? path.join(resolvedPath, "index.html") : resolvedPath;
-    const fileBuffer = await readFile(finalPath);
-    response.writeHead(200, {
-      ...defaultSecurityHeaders,
-      "Content-Type": mimeByExtension.get(path.extname(finalPath).toLowerCase()) ?? "application/octet-stream",
-      "Content-Length": fileBuffer.byteLength
-    });
-    response.end(fileBuffer);
-  } catch {
-    response.writeHead(404, {
-      ...defaultSecurityHeaders,
-      "Content-Type": "text/plain; charset=utf-8"
-    });
-    response.end("Not found");
-  }
+      const finalPath = fileStat.isDirectory() ? path.join(resolvedPath, "index.html") : resolvedPath;
+      const fileBuffer = await readFile(finalPath);
+      const extension = path.extname(finalPath).toLowerCase();
+      const responseHeaders = {
+        ...defaultSecurityHeaders,
+        "Content-Type": mimeByExtension.get(extension) ?? "application/octet-stream",
+        "Content-Length": fileBuffer.byteLength
+      };
+
+      if ([".html", ".js", ".mjs", ".css"].includes(extension)) {
+        responseHeaders["Cache-Control"] = "no-store";
+      }
+
+      response.writeHead(200, responseHeaders);
+      response.end(fileBuffer);
+    } catch {
+      response.writeHead(404, {
+        ...defaultSecurityHeaders,
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store"
+      });
+      response.end("Not found");
+    }
 }
 
 const server = createServer(async (request, response) => {

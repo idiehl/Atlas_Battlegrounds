@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700;800&family=Marcellus&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=20260331a">
+  <link rel="stylesheet" href="./styles.css?v=20260403e">
 </head>
 <body>
   <div class="app-frame">
@@ -37,11 +37,13 @@
         <section class="page-view" id="combos-view" aria-live="polite"></section>
         <section class="page-view" id="community-view" aria-live="polite"></section>
         <section class="page-view" id="support-view" aria-live="polite"></section>
+        <section class="page-view" id="privacy-view" aria-live="polite"></section>
         <section class="page-view" id="library-view" aria-live="polite"></section>
         <section class="page-view" id="heroes-view" aria-live="polite"></section>
       </main>
 
       <footer class="app-footer" id="app-footer"></footer>
+      <div id="comment-drawer-root"></div>
     </div>
 
     <aside class="ad-rail ad-rail-right" id="ad-rail-right" aria-label="Right advertisement rail"></aside>
@@ -55,13 +57,72 @@
 
   <script src="./data/battlegrounds-catalog.js?v=20260323a"></script>
   <script src="./data/season12-combos.js?v=20260327a"></script>
-  <script src="./data/season12-top-builds.js?v=20260326d"></script>
+  <script src="./data/season12-top-builds.js?v=20260404d"></script>
   <script src="./data/build-guide-details.js?v=20260324c"></script>
   <script src="./data/build-tier-plans.js?v=20260325a"></script>
-  <script src="./ad-config.js?v=20260328a"></script>
+  <script src="./ad-config.js?v=20260403c"></script>
   <script src="./support-config.js?v=20260328a"></script>
   <script src="./account-client.js?v=20260327a"></script>
   <script src="./community-client.js?v=20260330f"></script>
-  <script src="./app.js?v=20260331a"></script>
+  <script>
+    (function() {
+      const targetEyebrow = "board notes";
+      const targetTitle = "why these builds are on the board";
+      let removalTimer = null;
+
+      function normalizeText(value) {
+        return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+      }
+
+      function removeLegacyBuildNotes() {
+        const buildsView = document.getElementById("builds-view");
+        if (!buildsView) {
+          return;
+        }
+
+        buildsView.querySelectorAll(".page-card, section, article").forEach((container) => {
+          const eyebrow = container.querySelector(".eyebrow");
+          const heading = container.querySelector("h1, h2, h3, h4, h5, h6");
+          const eyebrowText = normalizeText(eyebrow?.textContent);
+          const headingText = normalizeText(heading?.textContent);
+
+          if (eyebrowText !== targetEyebrow && headingText !== targetTitle) {
+            return;
+          }
+
+          if (container && buildsView.contains(container)) {
+            container.remove();
+          }
+        });
+      }
+
+      function scheduleRemoval() {
+        if (removalTimer) {
+          clearTimeout(removalTimer);
+        }
+
+        requestAnimationFrame(removeLegacyBuildNotes);
+        removalTimer = setTimeout(removeLegacyBuildNotes, 50);
+      }
+
+      const observer = new MutationObserver(scheduleRemoval);
+
+      function start() {
+        observer.observe(document.body, { childList: true, subtree: true });
+        scheduleRemoval();
+        setInterval(removeLegacyBuildNotes, 1000);
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", start, { once: true });
+      } else {
+        start();
+      }
+
+      window.addEventListener("hashchange", scheduleRemoval);
+      window.addEventListener("load", scheduleRemoval);
+    })();
+  </script>
+  <script src="./app.js?v=20260404c"></script>
 </body>
 </html>
